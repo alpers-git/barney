@@ -277,12 +277,21 @@ namespace BARNEY_NS {
       } else {
         ls.direction = randomDirection(random);
         ls.distance  = BARNEY_INF;
+        /* IMPORTANT: 'radiance' here must be the *plain* radiance of
+           the ambient dome. The estimator consuming this sample
+           (tp_sr in bounce()) divides by ls.pdf, and the MIS partner
+           of this sample - a bounce ray that escapes - sees this very
+           same dome at plain 'ambientRadiance' (radianceFromEnv()).
+           The TWO_PI/FOUR_PI factors that used to be folded in here
+           pre-applied 1/pdf a second time, over-counting the ambient
+           light by up to 4pi (worst on volume hits, where nothing
+           else attenuates it). */
         if (N != vec3f(0.f)) {
-          ls.radiance  = TWO_PI*renderer.ambientRadiance;
+          ls.radiance  = renderer.ambientRadiance;
           if (dot(ls.direction,N) < 0.f) ls.direction = -ls.direction;
           ls.pdf       = ONE_OVER_TWO_PI;
         } else {
-          ls.radiance  = FOUR_PI*renderer.ambientRadiance;
+          ls.radiance  = renderer.ambientRadiance;
           ls.pdf       = ONE_OVER_FOUR_PI;
         }
       }
@@ -301,11 +310,9 @@ namespace BARNEY_NS {
                       bool &lightIsDirLight,
 #endif
                       bool &lightIsEnvLight,
-                      float &lightSelectionWeight,
                       bool dbg)
     {
       lightIsEnvLight = false;
-      lightSelectionWeight = 0.f;
 #if USE_MIS
 # if 0
       // huh ... not sure this is correct; setting this to true means
@@ -374,13 +381,11 @@ namespace BARNEY_NS {
                       r,alsWeight,elsWeight,dlsWeight);
       if (r <= alsWeight) {
         ls = als;
-        lightSelectionWeight = alsWeight;
         //   ls.pdf *= alsWeight;
         ls.radiance *= (1.f/alsWeight);
 #if ENV_LIGHT_SAMPLING
       } else if (r <= alsWeight+elsWeight) {
         ls = els;
-        lightSelectionWeight = elsWeight;
         ls.radiance *= (1.f/elsWeight);
         // ls.pdf *= elsWeight;
         if (dbg) printf(" ->  picked env light sample\n");
@@ -391,7 +396,6 @@ namespace BARNEY_NS {
 #endif
       } else if (r <= alsWeight+elsWeight+plsWeight) {
         ls = pls;
-        lightSelectionWeight = plsWeight;
         ls.radiance *= (1.f/plsWeight);
         // ls.pdf *= dlsWeight;
 # if USE_MIS
@@ -400,7 +404,6 @@ namespace BARNEY_NS {
         if (dbg) printf(" ->  picked POINT light sample, pls weight %f pdf %f\n",plsWeight,ls.pdf);
       } else {
         ls = dls;
-        lightSelectionWeight = dlsWeight;
         ls.radiance *= (1.f/dlsWeight);
         // ls.pdf *= dlsWeight;
 # if USE_MIS
@@ -635,7 +638,14 @@ namespace BARNEY_NS {
         else if (bsdf.type == PackedBSDF::TYPE_Phase)
           ambientContribution *= (vec3f)bsdf.data.phase.albedo;
       }
-      if (implicitAmbient && !ambientAOEnabled) {
+      /* the flat (un-occluded) ambient shortcut only applies to
+         VOLUME hits: in SCI_VIS_MODE a volume path is killed right
+         after shading, so unless AO rays carry the ambient light it
+         has to be added analytically here. Surface paths keep their
+         bounce ray, which picks up the very same ambient env when it
+         escapes - adding the flat term for surfaces as well would
+         count the ambient light twice. */
+      if (implicitAmbient && !ambientAOEnabled && isVolumeHit) {
         fragment += ambientContribution;
       }
 
@@ -670,7 +680,6 @@ namespace BARNEY_NS {
       bool lightIsDirLight = false;
 #endif
       bool lightIsEnvLight = false;
-      float lightSelectionWeight = 0.f;
       if (dbg)
         printf("sampling lights with N %f %f %f\n",Ngff.x,Ngff.y,Ngff.z);
       if (sampleLights(ls,world,renderer,dg.P,Ngff,random,
@@ -679,7 +688,6 @@ namespace BARNEY_NS {
                        lightIsDirLight,
 #endif
                        lightIsEnvLight,
-                       lightSelectionWeight,
                        dbg)) {
         if (dbg)
           printf("sample light dir %f %f %f rad %f %f %f pdf %f spike %f\n",
@@ -771,8 +779,23 @@ namespace BARNEY_NS {
           // ==============================================================
           // Ambient occlusion control: a shadow ray towards the
           // implicit, texture-less ambient env light is effectively an
-          // AO ray. We only cast it when both renderer AO parameters
-          // are non-zero; aoRadius is the occlusion distance.
+          // AO ray. When AO is enabled we clip that ray to aoRadius so
+          // it only tests for *nearby* occluders; when disabled we cast
+          // no such ray at all (the un-occluded ambient is instead added
+          // analytically by the flat-ambient shortcut above).
+          //
+          // Do NOT touch this ray's throughput or MIS weight: it is the
+          // light-sampling half of an MIS pair whose other half is the
+          // BSDF-sampled bounce ray (which re-adds this same ambient env
+          // on escape, see the secondary-ray miss path). Keeping the MIS
+          // light-sampling weight is exactly what makes the two halves
+          // sum to the ambient *once*; forcing the weight to 1 here while
+          // the bounce ray still contributes is what double-counted the
+          // ambient (worst at small aoRadius, where this ray is almost
+          // never occluded). The sole exception is a volume hit: in
+          // SCI_VIS_MODE the bounce ray is killed, so there is no
+          // BSDF-sampling partner and this ray must carry the full,
+          // un-MIS-weighted ambient instead.
           // ==============================================================
           const bool isAORay
             =  lightIsEnvLight
@@ -782,12 +805,9 @@ namespace BARNEY_NS {
               =  (renderer.aoRadius > 0.f)
               && (renderer.aoSamples > 0);
             if (castAORay) {
-              shadowState.throughput
-                = ambientContribution
-                * rcp(max(lightSelectionWeight,1e-10f));
-              shadowState.misWeight = 1.f;
-              shadowRay.tMax
-                = renderer.aoRadius;
+              shadowRay.tMax = renderer.aoRadius;
+              if (isVolumeHit)
+                shadowState.misWeight = 1.f;
             } else {
               // AO rays disabled: the un-occluded ambient shortcut
               // handles this path, so just cast no ray.
