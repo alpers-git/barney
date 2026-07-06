@@ -214,6 +214,8 @@ else()
   add_library(barney_rtc_optix INTERFACE) 
 endif()
 
+target_include_directories(barney_rtc_optix BEFORE PRIVATE ${OptiX_ROOT_DIR}/include)
+
 # ==================================================================
 if (BARNEY_BACKEND_CUDA)
   set(BACKEND_CUDA_SOURCES

@@ -607,6 +607,17 @@ namespace BARNEY_NS {
       Random random(ray.rngSeed,(const uint32_t&)ray.tMax);//rayID,ray.rngSeed);
       // Random random(ray.rngSeed.next((const uint32_t&)ray.tMax));//rayID,ray.rngSeed);
       const PackedBSDF bsdf = ray.getBSDF();
+      if (!world.envMapLight.texture && renderer.ambientRadiance > 0.f) {
+        vec3f amb = incomingThroughput * renderer.ambientRadiance;
+        if (bsdf.type == PackedBSDF::TYPE_NVisii)
+          amb *= bsdf.data.nvisii.getAlbedo(dbg);
+        else if (bsdf.type == PackedBSDF::TYPE_Lambertian)
+          amb *= rtc::load(bsdf.data.lambertian.albedo);
+        else if (bsdf.type == PackedBSDF::TYPE_Phase)
+          amb *= (vec3f)bsdf.data.phase.albedo;
+        fragment += amb;
+      }
+
       // bool doTransmission = false;
       // =  ((float)ray.mini.transmission > 0.f)
       // && (random() < (float)ray.mini.transmission);

@@ -9,6 +9,7 @@
 #include "barney/Context.h"
 #include "barney/volume/StructuredData.h"
 #include "barney/umesh/common/UMeshField.h"
+#include "barney/nface/NFaceField.h"
 #include "barney/amr/BlockStructuredField.h"
 #include "barney/volume/NanoVDB.h"
 
@@ -48,9 +49,14 @@ namespace BARNEY_NS {
           return std::make_shared<UMeshField>(ctx, devs); 
         });
       
-      registry.registerType("BlockStructuredAMR", 
-        [](Context* ctx, const DevGroup::SP& devs) { 
-          return std::make_shared<BlockStructuredField>(ctx, devs); 
+      registry.registerType("nface",
+        [](Context* ctx, const DevGroup::SP& devs) {
+          return std::make_shared<NFaceField>(ctx, devs);
+        });
+
+      registry.registerType("BlockStructuredAMR",
+        [](Context* ctx, const DevGroup::SP& devs) {
+          return std::make_shared<BlockStructuredField>(ctx, devs);
         });
       
       registry.registerType("NanoVDB", 
