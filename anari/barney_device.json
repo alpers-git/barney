@@ -36,7 +36,8 @@
       "khr_renderer_background_color",
       "khr_renderer_background_image",
       "khr_sampler_imagexd_clamp_to_border",
-      "nv_frame_buffers_cuda"
+      "nv_frame_buffers_cuda",
+      "barney_renderer_ambient_occlusion"
     ]
   },
   "objects": [
@@ -95,6 +96,22 @@
           "tags": [],
           "default": [0.0, 0.0, 0.0, 0.0],
           "description": "cutting plane equation (nx, ny, nz, d); disabled when w < -1e28"
+        },
+        {
+          "name": "aoRadius",
+          "types": ["ANARI_FLOAT32"],
+          "tags": [],
+          "default": 0.0,
+          "sourceExtension": "BARNEY_RENDERER_AMBIENT_OCCLUSION",
+          "description": "world-space ambient occlusion ray distance; 0 disables AO rays"
+        },
+        {
+          "name": "aoSamples",
+          "types": ["ANARI_INT32"],
+          "tags": [],
+          "default": 0,
+          "sourceExtension": "BARNEY_RENDERER_AMBIENT_OCCLUSION",
+          "description": "number of ambient occlusion samples; 0 disables AO rays"
         }
       ]
     }

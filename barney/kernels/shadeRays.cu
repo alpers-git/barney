@@ -300,8 +300,12 @@ namespace BARNEY_NS {
                       bool &lightNeedsMIS,
                       bool &lightIsDirLight,
 #endif
+                      bool &lightIsEnvLight,
+                      float &lightSelectionWeight,
                       bool dbg)
     {
+      lightIsEnvLight = false;
+      lightSelectionWeight = 0.f;
 #if USE_MIS
 # if 0
       // huh ... not sure this is correct; setting this to true means
@@ -318,11 +322,15 @@ namespace BARNEY_NS {
 
 #if ENV_LIGHT_SAMPLING
       Light::Sample els;
+      const bool sampleAmbientEnv
+        = world.envMapLight.texture
+        || (renderer.aoRadius > 0.f && renderer.aoSamples > 0);
       float elsWeight
-        = (sampleEnvLight(els,world,renderer,P,Ng,random,dbg)
+        = (sampleAmbientEnv
+           && sampleEnvLight(els,world,renderer,P,Ng,random,dbg)
            ? (reduce_max(els.radiance)/*/els.pdf*/)
            : 0.f);
-      if (dbg)
+      if (dbg && sampleAmbientEnv)
         printf("els rad %f %f %f pdf %f\n",
                els.radiance.x,
                els.radiance.y,
@@ -366,20 +374,24 @@ namespace BARNEY_NS {
                       r,alsWeight,elsWeight,dlsWeight);
       if (r <= alsWeight) {
         ls = als;
+        lightSelectionWeight = alsWeight;
         //   ls.pdf *= alsWeight;
         ls.radiance *= (1.f/alsWeight);
 #if ENV_LIGHT_SAMPLING
       } else if (r <= alsWeight+elsWeight) {
         ls = els;
+        lightSelectionWeight = elsWeight;
         ls.radiance *= (1.f/elsWeight);
         // ls.pdf *= elsWeight;
         if (dbg) printf(" ->  picked env light sample\n");
+        lightIsEnvLight = true;
 # if USE_MIS
         lightNeedsMIS = true;
 # endif
 #endif
       } else if (r <= alsWeight+elsWeight+plsWeight) {
         ls = pls;
+        lightSelectionWeight = plsWeight;
         ls.radiance *= (1.f/plsWeight);
         // ls.pdf *= dlsWeight;
 # if USE_MIS
@@ -388,6 +400,7 @@ namespace BARNEY_NS {
         if (dbg) printf(" ->  picked POINT light sample, pls weight %f pdf %f\n",plsWeight,ls.pdf);
       } else {
         ls = dls;
+        lightSelectionWeight = dlsWeight;
         ls.radiance *= (1.f/dlsWeight);
         // ls.pdf *= dlsWeight;
 # if USE_MIS
@@ -607,6 +620,25 @@ namespace BARNEY_NS {
       Random random(ray.rngSeed,(const uint32_t&)ray.tMax);//rayID,ray.rngSeed);
       // Random random(ray.rngSeed.next((const uint32_t&)ray.tMax));//rayID,ray.rngSeed);
       const PackedBSDF bsdf = ray.getBSDF();
+
+      const bool implicitAmbient
+        = !world.envMapLight.texture && renderer.ambientRadiance > 0.f;
+      const bool ambientAOEnabled
+        = implicitAmbient && renderer.aoRadius > 0.f && renderer.aoSamples > 0;
+      vec3f ambientContribution = 0.f;
+      if (implicitAmbient) {
+        ambientContribution = incomingThroughput * renderer.ambientRadiance;
+        if (bsdf.type == PackedBSDF::TYPE_NVisii)
+          ambientContribution *= bsdf.data.nvisii.getAlbedo(dbg);
+        else if (bsdf.type == PackedBSDF::TYPE_Lambertian)
+          ambientContribution *= rtc::load(bsdf.data.lambertian.albedo);
+        else if (bsdf.type == PackedBSDF::TYPE_Phase)
+          ambientContribution *= (vec3f)bsdf.data.phase.albedo;
+      }
+      if (implicitAmbient && !ambientAOEnabled) {
+        fragment += ambientContribution;
+      }
+
       // bool doTransmission = false;
       // =  ((float)ray.mini.transmission > 0.f)
       // && (random() < (float)ray.mini.transmission);
@@ -637,6 +669,8 @@ namespace BARNEY_NS {
       bool lightNeedsMIS = false;
       bool lightIsDirLight = false;
 #endif
+      bool lightIsEnvLight = false;
+      float lightSelectionWeight = 0.f;
       if (dbg)
         printf("sampling lights with N %f %f %f\n",Ngff.x,Ngff.y,Ngff.z);
       if (sampleLights(ls,world,renderer,dg.P,Ngff,random,
@@ -644,6 +678,8 @@ namespace BARNEY_NS {
                        lightNeedsMIS,
                        lightIsDirLight,
 #endif
+                       lightIsEnvLight,
+                       lightSelectionWeight,
                        dbg)) {
         if (dbg)
           printf("sample light dir %f %f %f rad %f %f %f pdf %f spike %f\n",
@@ -732,6 +768,32 @@ namespace BARNEY_NS {
               shadowRay.tMax  = -1.f;
           }
 #endif
+          // ==============================================================
+          // Ambient occlusion control: a shadow ray towards the
+          // implicit, texture-less ambient env light is effectively an
+          // AO ray. We only cast it when both renderer AO parameters
+          // are non-zero; aoRadius is the occlusion distance.
+          // ==============================================================
+          const bool isAORay
+            =  lightIsEnvLight
+            && !world.envMapLight.texture;
+          if (isAORay && shadowRay.tMax > 0.f) {
+            const bool castAORay
+              =  (renderer.aoRadius > 0.f)
+              && (renderer.aoSamples > 0);
+            if (castAORay) {
+              shadowState.throughput
+                = ambientContribution
+                * rcp(max(lightSelectionWeight,1e-10f));
+              shadowState.misWeight = 1.f;
+              shadowRay.tMax
+                = renderer.aoRadius;
+            } else {
+              // AO rays disabled: the un-occluded ambient shortcut
+              // handles this path, so just cast no ray.
+              shadowRay.tMax = -1.f;
+            }
+          }
         }
       }
       
@@ -1080,4 +1142,3 @@ namespace BARNEY_NS {
   }
   
 }
-

@@ -30,6 +30,10 @@ namespace barney_device {
 
     int m_pixelSamples{1};
     float m_ambientRadiance{0.8f};
+    // Ambient occlusion rays test occluders up to aoRadius. AO is
+    // disabled when either aoRadius or aoSamples is 0.
+    float m_aoRadius{0.f};
+    int m_aoSamples{0};
     bool m_crosshairs{false};
     bool m_denoise{true};
     bool m_fadeOutDenoiser{true};

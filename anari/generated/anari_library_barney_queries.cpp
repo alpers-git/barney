@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <math.h>
+#include <string.h>
 #include <anari/anari.h>
 namespace barney_device {
 static int subtype_hash(const char *str) {
@@ -110,6 +111,7 @@ const char ** query_extensions() {
       "ANARI_KHR_RENDERER_BACKGROUND_IMAGE",
       "ANARI_KHR_SAMPLER_IMAGExD_CLAMP_TO_BORDER",
       "ANARI_NV_FRAME_BUFFERS_CUDA",
+      "ANARI_BARNEY_RENDERER_AMBIENT_OCCLUSION",
       0
    };
    return extensions;
@@ -365,7 +367,75 @@ static const void * ANARI_RENDERER_default_background_info(ANARIDataType paramTy
       default: return nullptr;
    }
 }
+static const void * ANARI_RENDERER_default_aoRadius_info(ANARIDataType paramType, int infoName, ANARIDataType infoType) {
+   (void)paramType;
+   switch(infoName) {
+      case 0: // required
+         if(infoType == ANARI_BOOL) {
+            return &anari_false;
+         } else {
+            return nullptr;
+         }
+      case 1: // default
+         if(paramType == ANARI_FLOAT32 && infoType == ANARI_FLOAT32) {
+            static const float default_value[1] = {0.000000f};
+            return default_value;
+         } else {
+            return nullptr;
+         }
+      case 4: // description
+         {
+            static const char *description = "world-space ambient occlusion ray distance; 0 disables AO rays";
+            return description;
+         }
+      case 7: // sourceExtension
+         if(infoType == ANARI_STRING) {
+            static const char *extension = "BARNEY_RENDERER_AMBIENT_OCCLUSION";
+            return extension;
+         } else if(infoType == ANARI_INT32) {
+            static const int32_t value = 32;
+            return &value;
+         }
+      default: return nullptr;
+   }
+}
+static const void * ANARI_RENDERER_default_aoSamples_info(ANARIDataType paramType, int infoName, ANARIDataType infoType) {
+   (void)paramType;
+   switch(infoName) {
+      case 0: // required
+         if(infoType == ANARI_BOOL) {
+            return &anari_false;
+         } else {
+            return nullptr;
+         }
+      case 1: // default
+         if(paramType == ANARI_INT32 && infoType == ANARI_INT32) {
+            static const int32_t default_value[1] = {INT32_C(0)};
+            return default_value;
+         } else {
+            return nullptr;
+         }
+      case 4: // description
+         {
+            static const char *description = "number of ambient occlusion samples; 0 disables AO rays";
+            return description;
+         }
+      case 7: // sourceExtension
+         if(infoType == ANARI_STRING) {
+            static const char *extension = "BARNEY_RENDERER_AMBIENT_OCCLUSION";
+            return extension;
+         } else if(infoType == ANARI_INT32) {
+            static const int32_t value = 32;
+            return &value;
+         }
+      default: return nullptr;
+   }
+}
 static const void * ANARI_RENDERER_default_param_info(const char *paramName, ANARIDataType paramType, int infoName, ANARIDataType infoType) {
+   if(strcmp(paramName, "aoRadius") == 0 || strcmp(paramName, "AORadius") == 0)
+      return ANARI_RENDERER_default_aoRadius_info(paramType, infoName, infoType);
+   if(strcmp(paramName, "aoSamples") == 0 || strcmp(paramName, "AOSamples") == 0)
+      return ANARI_RENDERER_default_aoSamples_info(paramType, infoName, infoType);
    switch(param_hash(paramName)) {
       case 75:
          return ANARI_RENDERER_default_pixelSamples_info(paramType, infoName, infoType);
@@ -10670,6 +10740,8 @@ static const void * ANARI_RENDERER_default_info(int infoName, ANARIDataType info
                {"ambientRadiance", ANARI_FLOAT32},
                {"background", ANARI_FLOAT32_VEC4},
                {"background", ANARI_ARRAY2D},
+               {"aoRadius", ANARI_FLOAT32},
+               {"aoSamples", ANARI_INT32},
                {0, ANARI_UNKNOWN}
             };
             return parameters;
@@ -10711,6 +10783,7 @@ static const void * ANARI_RENDERER_default_info(int infoName, ANARIDataType info
                "ANARI_KHR_RENDERER_BACKGROUND_IMAGE",
                "ANARI_KHR_SAMPLER_IMAGExD_CLAMP_TO_BORDER",
                "ANARI_NV_FRAME_BUFFERS_CUDA",
+               "ANARI_BARNEY_RENDERER_AMBIENT_OCCLUSION",
                0
             };
             return extensions;
@@ -10894,6 +10967,7 @@ static const void * ANARI_DEVICE_info(int infoName, ANARIDataType infoType) {
                "ANARI_KHR_RENDERER_BACKGROUND_IMAGE",
                "ANARI_KHR_SAMPLER_IMAGExD_CLAMP_TO_BORDER",
                "ANARI_NV_FRAME_BUFFERS_CUDA",
+               "ANARI_BARNEY_RENDERER_AMBIENT_OCCLUSION",
                0
             };
             return extensions;

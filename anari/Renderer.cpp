@@ -21,6 +21,8 @@ void Renderer::commitParameters()
 {
   m_pixelSamples = getParam<int>("pixelSamples", 1);
   m_ambientRadiance = getParam<float>("ambientRadiance", 1.f);
+  m_aoRadius = getParam<float>("aoRadius", getParam<float>("AORadius", 0.f));
+  m_aoSamples = getParam<int>("aoSamples", getParam<int>("AOSamples", 0));
   m_crosshairs = getParam<bool>("crosshairs", false);
   m_denoise = getParam<bool>("denoise", true);
   m_fadeOutDenoiser = getParam<bool>("fadeOutDenoiser", true);
@@ -36,6 +38,8 @@ void Renderer::finalize()
   bnSet1i(barneyRenderer, "crosshairs", (int)m_crosshairs);
   bnSet1i(barneyRenderer, "pathsPerPixel", (int)m_pixelSamples);
   bnSet1f(barneyRenderer, "ambientRadiance", m_ambientRadiance);
+  bnSet1f(barneyRenderer, "aoRadius", m_aoRadius);
+  bnSet1i(barneyRenderer, "aoSamples", m_aoSamples);
   bnSet4f(barneyRenderer, "cutPlane",
           m_cutPlane.x, m_cutPlane.y, m_cutPlane.z, m_cutPlane.w);
 

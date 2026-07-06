@@ -29,6 +29,8 @@ namespace BARNEY_NS {
     pathsPerPixel   = staged.pathsPerPixel;
     bgTexture       = staged.bgTexture;
     cutPlane        = staged.cutPlane;
+    aoRadius        = staged.aoRadius;
+    aoSamples       = staged.aoSamples;
   }
   
   bool Renderer::setObject(const std::string &member,
@@ -51,6 +53,10 @@ namespace BARNEY_NS {
       staged.ambientRadiance = value;
       return true;
     }
+    if (member == "aoRadius" || member == "AORadius") {
+      staged.aoRadius = value;
+      return true;
+    }
     return false;
   }
   
@@ -64,6 +70,10 @@ namespace BARNEY_NS {
     }
     if (member == "crosshairs") {
       staged.crosshairs = value;
+      return true;
+    }
+    if (member == "aoSamples" || member == "AOSamples") {
+      staged.aoSamples = value;
       return true;
     }
     return false;
@@ -94,6 +104,8 @@ namespace BARNEY_NS {
     dd.ambientRadiance = ambientRadiance;
     dd.pathsPerPixel = pathsPerPixel;
     dd.cutPlane = cutPlane;
+    dd.aoRadius = aoRadius;
+    dd.aoSamples = aoSamples;
     return dd;
   }
   

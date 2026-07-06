@@ -22,6 +22,12 @@ namespace BARNEY_NS {
       float              ambientRadiance;
       int                pathsPerPixel;
       vec4f              cutPlane;
+      /*! ambient occlusion control: AO rays test occluders up to
+          aoRadius along the sampled direction. If either aoRadius or
+          aoSamples is 0 no AO rays get cast, and the ambient light
+          contributes un-occluded. */
+      float              aoRadius;
+      int                aoSamples;
     };
     
     Renderer(Context *context);
@@ -52,6 +58,8 @@ namespace BARNEY_NS {
       float       ambientRadiance = 1.f;
       int         crosshairs      = 0;
       vec4f       cutPlane        = vec4f(0,0,0,-1e30f);
+      float       aoRadius        = 0.f;
+      int         aoSamples       = 0;
     } staged;
     vec4f       bgColor         = vec4f(0,0,0,1.f);
     Texture::SP bgTexture       = 0;
@@ -59,6 +67,9 @@ namespace BARNEY_NS {
     float       ambientRadiance = 1.f;
     int         crosshairs      = 0;
     vec4f       cutPlane        = vec4f(0,0,0,-1e30f);
+    /*! ambient occlusion control, see DD::aoRadius/aoSamples. */
+    float       aoRadius        = 0.f;
+    int         aoSamples       = 0;
   };
 
 }
