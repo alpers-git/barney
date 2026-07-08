@@ -17,6 +17,10 @@ namespace BARNEY_NS {
                        /*name*/BlockStructuredMC,
                        /*geomtype device data */
                        MCVolumeAccel<BlockStructuredCuBQLSampler>::DD,false,false);
+  RTC_IMPORT_USER_GEOM(/*file*/BlockStructuredMC,
+                       /*name*/BlockStructuredMC_Iso,
+                       /*geomtype device data */
+                       MCIsoSurfaceAccel<BlockStructuredCuBQLSampler>::DD,false,false);
 
   enum { MC_GRID_SIZE = 256 };
 
@@ -159,6 +163,16 @@ namespace BARNEY_NS {
     return std::make_shared<MCVolumeAccel<BlockStructuredCuBQLSampler>>
       (volume,
        createGeomType_BlockStructuredMC,
+       sampler);
+  }
+
+  IsoSurfaceAccel::SP BlockStructuredField::createIsoAccel(IsoSurface *isoSurface)
+  {
+    auto sampler
+      = std::make_shared<BlockStructuredCuBQLSampler>(this);
+    return std::make_shared<MCIsoSurfaceAccel<BlockStructuredCuBQLSampler>>
+      (isoSurface,
+       createGeomType_BlockStructuredMC_Iso,
        sampler);
   }
 

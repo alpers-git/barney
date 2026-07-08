@@ -6,6 +6,10 @@
 
 #include "barney/Object.h"
 #include "barney/ModelSlot.h"
+// pulls in the complete IsoSurfaceAccel / IsoSurface definitions so
+// createIsoAccel() below can name IsoSurfaceAccel::SP (matches the
+// structured / umesh field headers)
+#include "barney/volume/MCAccelerator.h"
 
 namespace BARNEY_NS {
 
@@ -73,6 +77,11 @@ namespace BARNEY_NS {
                            range1f *d_primRanges);
     
     VolumeAccel::SP createAccel(Volume *volume) override;
+
+    /*! creates a macro-cell accelerated iso-surface accel for this AMR
+        field, reusing the same cuBQL sampler and macro-cell grid the
+        volume path uses */
+    IsoSurfaceAccel::SP createIsoAccel(IsoSurface *isoSurface) override;
 
     struct {
       PODData::SP/*3i*/ origins    = 0;

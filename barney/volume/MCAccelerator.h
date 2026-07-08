@@ -471,6 +471,16 @@ namespace BARNEY_NS {
     vec3f osN = - normalize(obj_dir);
     vec3f n   = - normalize(obj_dir);
 #endif
+    // The field gradient points toward increasing scalar value, i.e. an
+    // arbitrary side of the level set (for a field whose high values are
+    // enclosed it points *inward*). Used as-is that leaves the visible side of
+    // the surface back-facing, so a matte material gets no direct light and a
+    // PBR one streaks. An opaque iso-surface is two-sided, so face-forward the
+    // shading normal against the ray to always light the side we can see.
+    if (dot(n, ray.dir) > 0.f) {
+      n   = -n;
+      osN = -osN;
+    }
     int primID    = ti.getPrimitiveIndex();
     int instID    = ti.getInstanceID();
     
