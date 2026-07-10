@@ -63,6 +63,7 @@ namespace BARNEY_NS {
   __rtc_global
   void computeWorldBounds(const rtc::ComputeInterface &ci,
                           box3f *pBounds,
+                          float *pFinestCellSize,
                           const BlockStructuredField::DD dd)
   {
 #if RTC_DEVICE_CODE
@@ -78,6 +79,7 @@ namespace BARNEY_NS {
     rtc::fatomicMax(&pBounds->upper.x,bb.upper.x);
     rtc::fatomicMax(&pBounds->upper.y,bb.upper.y);
     rtc::fatomicMax(&pBounds->upper.z,bb.upper.z);
+    rtc::fatomicMin(pFinestCellSize,block.cellSize);
 #endif
   }
   
@@ -150,8 +152,9 @@ namespace BARNEY_NS {
     dd.perLevel.refinements = (const int *)perLevel.refinements->getDD(device);
     
     dd.scalars      = (const float *)scalars->getDD(device);
-    
+
     dd.numBlocks    = (int)perBlock.origins->count;
+    dd.finestCellSize = finestCellSize;
 
     return dd;
   }
@@ -291,15 +294,19 @@ namespace BARNEY_NS {
       SetActiveGPU forDuration(dev);
       auto rtc = dev->rtc;
       box3f *d_worldBounds = (box3f *)rtc->allocMem(sizeof(box3f));
+      float *d_finestCellSize = (float *)rtc->allocMem(sizeof(float));
       rtc->copy(d_worldBounds,&worldBounds,sizeof(worldBounds));
+      float initFinest = 1e30f;
+      rtc->copy(d_finestCellSize,&initFinest,sizeof(float));
       __rtc_launch(// dev and kernel
                    rtc,computeWorldBounds,
                    // launch config
                    divRoundUp(numBlocks,128),128,
                    // kernel args
-                   d_worldBounds,getDD(dev));
+                   d_worldBounds,d_finestCellSize,getDD(dev));
       rtc->sync();
       rtc->copy(&worldBounds,d_worldBounds,sizeof(worldBounds));
+      rtc->copy(&finestCellSize,d_finestCellSize,sizeof(float));
     }
     
   }

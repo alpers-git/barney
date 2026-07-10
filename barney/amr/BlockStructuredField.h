@@ -51,6 +51,7 @@ namespace BARNEY_NS {
         const int   *refinements;
       } perLevel;
       int numBlocks;
+      float finestCellSize; // smallest cell size present (for iso octant sampling)
     };
 
     BlockStructuredField(Context *context,
@@ -94,6 +95,7 @@ namespace BARNEY_NS {
     } perLevel;
     PODData::SP/*1f*/   scalars     = 0;
     int                 numBlocks   = 0;
+    float               finestCellSize = 0.f;
   };
 
 
