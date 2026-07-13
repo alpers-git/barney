@@ -20,9 +20,25 @@
 namespace BARNEY_NS {
   using render::Ray;
   using render::DeviceMaterial;
- 
+
+#if RTC_DEVICE_CODE
+  /*! Customization point for iso-surface shading normals: a field sampler may
+      provide the reconstructed value *and* an analytic object-space gradient in
+      a single query (e.g. the AMR basis method, ExaBricks eq. 3). Returning
+      false - the default for samplers that don't specialise this - makes the iso
+      accel fall back to central differences. ADL finds a sampler-specific
+      overload defined in that sampler's own header. */
+  template<typename SamplerDD>
+  inline __rtc_device
+  bool isoAnalyticGrad(const SamplerDD &, vec3f, float &, vec3f &) { return false; }
+
+  template<typename SamplerDD>
+  inline __rtc_device
+  float isoLocalStep(const SamplerDD &, vec3f, float fallback) { return fallback; }
+#endif
+
   template<typename SFSampler>
-  struct MCVolumeAccel : public VolumeAccel 
+  struct MCVolumeAccel : public VolumeAccel
   {
     struct DD 
     {
@@ -440,37 +456,46 @@ namespace BARNEY_NS {
     // ------------------------------------------------------------------
     const vec3f osP  = obj_org + tHit * obj_dir;
     vec3f P  = ti.transformPointFromObjectToWorldSpace(osP);
-#if 1
-    float delta
-      = length(bounds.size()) * .1f
-      / float(self.mcGrid.dims.x+self.mcGrid.dims.y+self.mcGrid.dims.z);
-    
-    float fP   = self.isoSurface.sfSampler.sample(osP);
-    float fPx0 = self.isoSurface.sfSampler.sample(osP+vec3f(-delta,0.f,0.f));
-    float fPx1 = self.isoSurface.sfSampler.sample(osP+vec3f(+delta,0.f,0.f));
-    float fPy0 = self.isoSurface.sfSampler.sample(osP+vec3f(0.f,-delta,0.f));
-    float fPy1 = self.isoSurface.sfSampler.sample(osP+vec3f(0.f,+delta,0.f));
-    float fPz0 = self.isoSurface.sfSampler.sample(osP+vec3f(0.f,0.f,-delta));
-    float fPz1 = self.isoSurface.sfSampler.sample(osP+vec3f(0.f,0.f,+delta));
-    float dx = 2.f;
-    float dy = 2.f;
-    float dz = 2.f;
-    if (isnan(fPx0)) { dx -= 1.f; fPx0 = fP; }
-    if (isnan(fPx1)) { dx -= 1.f; fPx1 = fP; }
-    if (isnan(fPy0)) { dy -= 1.f; fPy0 = fP; }
-    if (isnan(fPy1)) { dy -= 1.f; fPy1 = fP; }
-    if (isnan(fPz0)) { dz -= 1.f; fPz0 = fP; }
-    if (isnan(fPz1)) { dz -= 1.f; fPz1 = fP; }
-    vec3f osN(dx == 0.f ? 0.f : (fPx1-fPx0) / dx,
-              dy == 0.f ? 0.f : (fPy1-fPy0) / dy,
-              dz == 0.f ? 0.f : (fPz1-fPz0) / dz);
-    if (osN == vec3f(0.f))
+    // Shading normal from the field gradient. Prefer a sampler-provided analytic
+    // gradient (one query, e.g. the AMR basis method); otherwise fall back to a
+    // 7-tap central difference.
+    vec3f osN;
+    float fP;
+    if (!isoAnalyticGrad(self.isoSurface.sfSampler, osP, fP, osN)) {
+      const float fallbackDelta
+        = length(bounds.size()) * .1f
+        / float(self.mcGrid.dims.x+self.mcGrid.dims.y+self.mcGrid.dims.z);
+      // step matched to the local cell (AMR): low-passes the gradient so fine-
+      // scale field detail doesn't turn into noisy, view-dependent dark facets
+      const float delta = isoLocalStep(self.isoSurface.sfSampler, osP, fallbackDelta);
+      fP         = self.isoSurface.sfSampler.sample(osP);
+      float fPx0 = self.isoSurface.sfSampler.sample(osP+vec3f(-delta,0.f,0.f));
+      float fPx1 = self.isoSurface.sfSampler.sample(osP+vec3f(+delta,0.f,0.f));
+      float fPy0 = self.isoSurface.sfSampler.sample(osP+vec3f(0.f,-delta,0.f));
+      float fPy1 = self.isoSurface.sfSampler.sample(osP+vec3f(0.f,+delta,0.f));
+      float fPz0 = self.isoSurface.sfSampler.sample(osP+vec3f(0.f,0.f,-delta));
+      float fPz1 = self.isoSurface.sfSampler.sample(osP+vec3f(0.f,0.f,+delta));
+      float dx = 2.f, dy = 2.f, dz = 2.f;
+      if (isnan(fPx0)) { dx -= 1.f; fPx0 = fP; }
+      if (isnan(fPx1)) { dx -= 1.f; fPx1 = fP; }
+      if (isnan(fPy0)) { dy -= 1.f; fPy0 = fP; }
+      if (isnan(fPy1)) { dy -= 1.f; fPy1 = fP; }
+      if (isnan(fPz0)) { dz -= 1.f; fPz0 = fP; }
+      if (isnan(fPz1)) { dz -= 1.f; fPz1 = fP; }
+      osN = vec3f(dx == 0.f ? 0.f : (fPx1-fPx0) / dx,
+                  dy == 0.f ? 0.f : (fPy1-fPy0) / dy,
+                  dz == 0.f ? 0.f : (fPz1-fPz0) / dz);
+    }
+    // Sensible-default shading normal. A gradient is unusable when it is
+    // non-finite (a central-diff tap left the volume / hit a coverage gap, or the
+    // hit sample fP was NaN) or (near-)zero (locally flat field). Guarding on the
+    // squared length catches all three (NaN/inf/zero fail `l2 > eps && l2 < huge`;
+    // note `osN == 0` would miss NaN, which compares unequal to everything and
+    // shaded black). Fall back to a ray-facing normal so the pixel is lit.
+    const float osN2 = dot(osN,osN);
+    if (isnan(fP) || !(osN2 > 1e-20f && osN2 < 1e30f))
       osN = -normalize(obj_dir);
     vec3f n = ti.transformNormalFromObjectToWorldSpace(osN);
-#else
-    vec3f osN = - normalize(obj_dir);
-    vec3f n   = - normalize(obj_dir);
-#endif
     // The field gradient points toward increasing scalar value, i.e. an
     // arbitrary side of the level set (for a field whose high values are
     // enclosed it points *inward*). Used as-is that leaves the visible side of
