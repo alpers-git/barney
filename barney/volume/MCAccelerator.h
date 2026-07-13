@@ -409,8 +409,31 @@ namespace BARNEY_NS {
 
                 auto intersect = [&](float isoValue)
                 {
-                  float t = (isoValue - ff0) / (ff1-ff0);
-                  t = lerp_l(t,tRange.lower,tRange.upper);
+                  // The basis reconstruction is not linear along the ray. The
+                  // march only gives us a bracket, so refine that bracket before
+                  // evaluating the shading gradient. Otherwise the reported hit
+                  // can sit noticeably off the level set and its normal changes
+                  // with the view direction.
+                  float lo = tRange.lower, hi = tRange.upper;
+                  float vlo = ff0, vhi = ff1;
+                  for (int refine=0;refine<3;refine++) {
+                    const float denom = vhi-vlo;
+                    float u = denom == 0.f ? .5f : (isoValue-vlo)/denom;
+                    u = min(.9f,max(.1f,u));
+                    const float tm = lerp_l(u,lo,hi);
+                    const float vm = self.isoSurface.sfSampler.sample
+                      (obj_org + tm*obj_dir,dbg);
+                    if (isnan(vm)) break;
+                    if ((vlo < isoValue) == (vm < isoValue)) {
+                      lo = tm; vlo = vm;
+                    } else {
+                      hi = tm; vhi = vm;
+                    }
+                  }
+                  const float denom = vhi-vlo;
+                  const float u = denom == 0.f
+                    ? .5f : min(1.f,max(0.f,(isoValue-vlo)/denom));
+                  const float t = lerp_l(u,lo,hi);
                   tHit = min(tHit,t);
                 };
                   

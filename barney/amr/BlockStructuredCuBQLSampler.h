@@ -158,10 +158,14 @@ namespace BARNEY_NS {
     cuBQL::fixedBoxQuery::forEachPrim(lambda,bvh,box);
     if (acc.D == 0.f) { grad = vec3f(0.f); return NAN; }
     const float invD = 1.f/acc.D;
-    grad = vec3f(acc.D*acc.Nx - acc.N*acc.Dx,
-                 acc.D*acc.Ny - acc.N*acc.Dy,
-                 acc.D*acc.Nz - acc.N*acc.Dz) * (invD*invD);
-    return acc.N*invD;
+    const float value = acc.N*invD;
+    // Algebraically identical to the quotient rule above, but factoring out D
+    // avoids multiplying two potentially small basis sums before dividing by
+    // D^2. This is materially more stable near support/level boundaries.
+    grad = vec3f(acc.Nx - value*acc.Dx,
+                 acc.Ny - value*acc.Dy,
+                 acc.Nz - value*acc.Dz) * invD;
+    return value;
   }
 
   inline __rtc_device
@@ -188,7 +192,9 @@ namespace BARNEY_NS {
   float isoLocalStep(const BlockStructuredCuBQLSampler::DD &s, vec3f P, float fallback)
   {
     const float cs = s.localCellSize(P);
-    return cs > 0.f ? cs : fallback;
+    // ExaBricks' high-quality base rate is two samples per smallest local
+    // cell. Match that spacing when the analytic path needs a CD fallback.
+    return cs > 0.f ? .5f*cs : fallback;
   }
 
   inline __rtc_device
@@ -451,12 +457,15 @@ namespace BARNEY_NS {
   /*! AMR override of the iso analytic-gradient customization point declared in
       MCAccelerator.h. */
   inline __rtc_device
-  bool isoAnalyticGrad(const BlockStructuredCuBQLSampler::DD &/*s*/,
-                       vec3f /*P*/, float &/*value*/, vec3f &/*grad*/)
+  bool isoAnalyticGrad(const BlockStructuredCuBQLSampler::DD &s,
+                       vec3f P, float &value, vec3f &grad)
   {
-    return false;
+    value = s.sampleGrad(P,grad);
+    const float g2 = dot(grad,grad);
+    // Wald et al. use this analytic derivative as their real-time default.
+    // Let MCAccelerator fall back to cross-region central differences only at
+    // an uncovered or numerically degenerate point.
+    return !isnan(value) && g2 > 1e-20f && g2 < 1e30f;
   }
 #endif
 }
-
-
