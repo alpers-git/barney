@@ -42,6 +42,11 @@ namespace BARNEY_NS {
           coarse cells Chombo stores *under* refined regions are excluded via the
           per-cell `active` mask, which is what previously caused boundary bands. */
       inline __rtc_device float sample(vec3f P, bool dbg = false) const;
+      /*! value at P (identical to sample()) AND, in the SAME single bvh query, the
+          finest cell size among blocks overlapping the box [P,Pahead]; used by the
+          adaptive iso crossing march for a safe look-ahead step. cellSize=0 if
+          nothing overlaps the box (coverage gap / empty). */
+      inline __rtc_device float sampleAndLookaheadCellSize(vec3f P, vec3f Pahead, float &cellSize) const;
       /*! reconstructs the value at P *and* its analytic object-space gradient
           (ExaBricks eq. 3) in the same single bvh query - used for iso shading
           normals in place of a 7-tap central difference. Returns NAN (grad 0)
@@ -140,6 +145,30 @@ namespace BARNEY_NS {
     return ptd.sumWeights == 0.f ? NAN : (ptd.sumWeightedValues  / ptd.sumWeights);
   }
 
+  /*! sample(P) (byte-for-byte: addBasisFunctions self-filters to blocks containing P)
+      plus, free in the same bvh traversal, the finest cell size over blocks in
+      [P,Pahead] - the adaptive march's look-ahead. */
+  inline __rtc_device
+  float BlockStructuredCuBQLSampler::DD::sampleAndLookaheadCellSize(vec3f P,
+                                                                    vec3f Pahead,
+                                                                    float &cellSize) const
+  {
+    float sumWeights = 0.f, sumWeightedValues = 0.f, best = 0.f;
+    auto lambda = [&](const uint32_t primID) -> int {
+      addBasisFunctions(sumWeightedValues,sumWeights,primID,P);
+      const float cs = Block::getFrom(*this,primID).cellSize;
+      if (best == 0.f || cs < best) best = cs;
+      return CUBQL_CONTINUE_TRAVERSAL;
+    };
+    const vec3f lo = min(P,Pahead), hi = max(P,Pahead);
+    cuBQL::box3f box;
+    box.lower = (const cuBQL::vec3f &)lo;
+    box.upper = (const cuBQL::vec3f &)hi;
+    cuBQL::fixedBoxQuery::forEachPrim(lambda,bvh,box);
+    cellSize = best;
+    return sumWeights == 0.f ? NAN : (sumWeightedValues / sumWeights);
+  }
+
   /*! value + analytic gradient of the active-cell basis reconstruction, in one
       bvh query (ExaBricks, Wald et al. 2020, eq. 3). Cheaper and higher quality
       than clamped central differences: no extra traversals, and the gradient is
@@ -196,6 +225,12 @@ namespace BARNEY_NS {
     // cell. Match that spacing when the analytic path needs a CD fallback.
     return cs > 0.f ? .5f*cs : fallback;
   }
+
+  /*! ADL hook for the adaptive iso march: value at P + finest cell in the look-ahead box. */
+  inline __rtc_device
+  float isoSampleLookahead(const BlockStructuredCuBQLSampler::DD &s,
+                           vec3f P, vec3f Pahead, float &cs)
+  { return s.sampleAndLookaheadCellSize(P,Pahead,cs); }
 
   inline __rtc_device
   AMRLeaf BlockStructuredCuBQLSampler::DD::cellAt(vec3f q) const
