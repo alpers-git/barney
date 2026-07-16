@@ -354,12 +354,29 @@ namespace BARNEY_NS {
       return;
 
     // ------------------------------------------------------------------
-    // compute ray in macro cell grid space 
+    // Re-origin the fine march at the field-box entry so every sample
+    // position below is formed from small, dataset-scale parameters rather
+    // than camera-distance-scale ones. With a far camera P = obj_org +
+    // t*obj_dir is a difference of two large, nearly-cancelling terms, so
+    // consecutive samples along the ray carry independent ~|obj_org|*eps
+    // position noise; once that approaches the finest cell size the crossing
+    // search brackets inconsistently and the surface TEARS (grows as you zoom
+    // out, clean up close). Shifting the origin to the box entry makes each
+    // per-sample increment small and self-consistent - only a fixed, smoothly
+    // varying sub-cell offset survives - so the march is zoom-invariant. Same
+    // reason Spheres uses the RTG2 "move the origin" trick. All march-local t
+    // below are measured from tEnter; convert back (+tEnter) only for the
+    // reported hit distance / depth. Volume path is deliberately untouched.
+    const float tEnter   = tRange.lower;               // box entry, original units
+    const float tMaxL    = ray.tMax - tEnter;          // ray max, march-local
+    const vec3f marchOrg = obj_org + tEnter * obj_dir; // per-ray base, near data
+    // ------------------------------------------------------------------
+    // compute ray in macro cell grid space
     // ------------------------------------------------------------------
     vec3f mcGridOrigin  = self.mcGrid.gridOrigin;
     vec3f mcGridSpacing = self.mcGrid.gridSpacing;
 
-    vec3f dda_org = obj_org;
+    vec3f dda_org = marchOrg;
     vec3f dda_dir = obj_dir;
 
     dda_org = (dda_org - mcGridOrigin) * rcp(mcGridSpacing);
@@ -375,14 +392,20 @@ namespace BARNEY_NS {
                                      ti.getPrimitiveIndex())));
 #endif
     
-    float tHit = ray.tMax;
-    dda::dda3(dda_org,dda_dir,tRange.upper,
+    // Object-space ray-direction length: converts a t-interval into a world
+    // distance for the adaptive march step below (obj_dir is generally not
+    // unit-length). refStep is only a fallback for samplers that don't provide a
+    // local cell size (see the per-segment step in the DDA lambda).
+    const float dirLen  = length(obj_dir);
+    const float refStep = reduce_min(mcGridSpacing) * 0.1f;
+    float tHit = tMaxL;
+    dda::dda3(dda_org,dda_dir,tRange.upper - tEnter,
               vec3ui(self.mcGrid.dims),
               [&](const vec3i &cellIdx, float t0, float t1) -> bool
               {
                 float _t0 = t0;
                 float _t1 = t1;
-                range1f tRange = range1f {t0,min(t1,ray.tMax)};
+                range1f tRange = range1f {t0,min(t1,tMaxL)};
                 if (tRange.lower >= tRange.upper) return true;
                 
                 range1f valueRange = self.mcGrid.scalarRange(cellIdx);
@@ -422,7 +445,7 @@ namespace BARNEY_NS {
                     u = min(.9f,max(.1f,u));
                     const float tm = lerp_l(u,lo,hi);
                     const float vm = self.isoSurface.sfSampler.sample
-                      (obj_org + tm*obj_dir,dbg);
+                      (marchOrg + tm*obj_dir,dbg);
                     if (isnan(vm)) break;
                     if ((vlo < isoValue) == (vm < isoValue)) {
                       lo = tm; vlo = vm;
@@ -439,14 +462,41 @@ namespace BARNEY_NS {
                   
 
                 float tt1 = t0;
-                vec3f P = obj_org + tt1 * obj_dir;
+                vec3f P = marchOrg + tt1 * obj_dir;
                 ff1 = self.isoSurface.sfSampler.sample(P,dbg);
-                int numSteps = 10; 
+                // Anti-aliasing guard for the crossing search: sample several
+                // times per FINEST cell the segment actually touches, or thin
+                // fine-level crossings get stepped over and the surface drops out
+                // for the views where the crossing projects thin (macro-cell-
+                // aligned, view-dependent patches). Needed IN ADDITION to the
+                // precision re-origin: re-origin makes the sample positions
+                // accurate, this makes them dense enough to catch thin crossings;
+                // removing either brings the tears back (verified). A macro cell
+                // spans many fine AMR cells and can straddle a level boundary, so
+                // probe the local cell size at both ends AND the middle of the
+                // segment and take the finest (smallest) - a single midpoint probe
+                // reports the coarse size when a fine block only touches one end,
+                // marching the whole segment too coarse. isoLocalStep returns half
+                // the local cell for AMR (fallback = macro-cell refStep for other
+                // samplers); the extra 0.5 oversamples to ~4 samples per finest cell.
+                const float sA = isoLocalStep(self.isoSurface.sfSampler,
+                                              marchOrg + _t0*obj_dir, refStep);
+                const float sB = isoLocalStep(self.isoSurface.sfSampler,
+                                              marchOrg + (0.5f*(_t0+_t1))*obj_dir, refStep);
+                const float sC = isoLocalStep(self.isoSurface.sfSampler,
+                                              marchOrg + _t1*obj_dir, refStep);
+                const float mStep = 0.5f * min(sA,min(sB,sC));
+                int numSteps = 10;
+                if (mStep > 0.f) {
+                  const float segLen = (_t1 - _t0) * dirLen;
+                  numSteps = int(ceilf(segLen / mStep));
+                  numSteps = max(10, min(numSteps, 256));
+                }
                 for (int i=1;i<=numSteps;i++) {
                   float tt0 = tt1;
                   ff0 = ff1;
                   tt1 = lerp_l(i/float(numSteps),_t0,_t1);
-                  P = obj_org + tt1 * obj_dir;
+                  P = marchOrg + tt1 * obj_dir;
                   ff1 = self.isoSurface.sfSampler.sample(P,dbg);
                   if (isnan(ff0) || isnan(ff1)) continue;
                   
@@ -462,7 +512,7 @@ namespace BARNEY_NS {
                            valueRange.upper);
                   if (overlaps(self.isoSurface.isoValue)) {
                     intersect(self.isoSurface.isoValue);
-                    if (tHit < ray.tMax) {
+                    if (tHit < tMaxL) {
                       return false;
                     }
                   }
@@ -472,12 +522,17 @@ namespace BARNEY_NS {
               },
               /*NO debug:*/false
               );
-    if (tHit >= ray.tMax) return;
-    
+    if (tHit >= tMaxL) return;
+
+    // tHit is march-local (measured from tEnter). The reported hit distance and
+    // depth must be in the original ray parameterization so the iso composites /
+    // depth-sorts correctly against other geometry in the shared accel.
+    const float tHitOrig = tHit + tEnter;
+
     // ------------------------------------------------------------------
     // get texture coordinates
     // ------------------------------------------------------------------
-    const vec3f osP  = obj_org + tHit * obj_dir;
+    const vec3f osP  = marchOrg + tHit * obj_dir;
     vec3f P  = ti.transformPointFromObjectToWorldSpace(osP);
     // Shading normal from the field gradient. Prefer a sampler-provided analytic
     // gradient (one query, e.g. the AMR basis method); otherwise fall back to a
@@ -539,7 +594,7 @@ namespace BARNEY_NS {
     hitData.objectNormal    = make_vec4f(normalize(osN));
     hitData.primID          = primID;
     hitData.instID          = instID;
-    hitData.t               = tHit;
+    hitData.t               = tHitOrig;
     hitData.isShadowRay     = ray.isShadowRay;
     float u = 0.f;
     float v = 0.f;
@@ -566,6 +621,14 @@ namespace BARNEY_NS {
     }
     material.setHit(ray,hitData,world.samplers,dbg);
 
+    // Commit the hit to the traversal so it clips the ray interval to tHit and
+    // culls geometry *behind* the iso surface. Without this the accel never
+    // learns the iso hit distance (setHit only writes the PRD), so a farther
+    // triangle mesh in the same accel can still run and overwrite the PRD -
+    // producing view-/build-dependent depth ordering against other surfaces.
+    // Every other primitive (spheres etc.) and the volume isProg report too.
+    ti.reportIntersection(tHitOrig, 0);
+
     // Write hit IDs for AOV channels
     const render::OptixGlobals &globals = render::OptixGlobals::get(ti);
     if (globals.hitIDs) {
@@ -573,14 +636,14 @@ namespace BARNEY_NS {
         = ti.getLaunchIndex().x
         + ti.getLaunchDims().x
         * ti.getLaunchIndex().y;
-      if (tHit < globals.hitIDs[rayID].depth) {
+      if (tHitOrig < globals.hitIDs[rayID].depth) {
         globals.hitIDs[rayID].primID = primID;
         globals.hitIDs[rayID].instID
           = globals.world.instIDToUserInstID
           ? globals.world.instIDToUserInstID[instID]
           : instID;
         globals.hitIDs[rayID].objID  = self.isoSurface.userID;
-        globals.hitIDs[rayID].depth  = tHit;
+        globals.hitIDs[rayID].depth  = tHitOrig;
       }
     }
   }
