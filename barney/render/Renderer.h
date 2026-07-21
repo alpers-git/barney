@@ -28,6 +28,10 @@ namespace BARNEY_NS {
           contributes un-occluded. */
       float              aoRadius;
       int                aoSamples;
+      float              gladstoneDale;
+      vec3f              knife;
+      float              schlierenOpacity;
+      vec2f              schlierenRange;
     };
     
     Renderer(Context *context);
@@ -47,6 +51,7 @@ namespace BARNEY_NS {
                  const std::shared_ptr<Object> &value) override;
     bool set1i(const std::string &member, const int &value) override;
     bool set1f(const std::string &member, const float &value) override;
+    bool set3f(const std::string &member, const vec3f &value) override;
     bool set4f(const std::string &member, const vec4f &value) override;
     /*! @} */
     // ------------------------------------------------------------------
@@ -60,6 +65,10 @@ namespace BARNEY_NS {
       vec4f       cutPlane        = vec4f(0,0,0,-1e30f);
       float       aoRadius        = 0.f;
       int         aoSamples       = 0;
+      float       gladstoneDale    = 1e-4f;
+      vec3f       knife            = vec3f(1.f,0.f,0.f);
+      float       schlierenOpacity = 0.9f;
+      vec2f       schlierenRange   = vec2f(-1.f,1.f);
     } staged;
     vec4f       bgColor         = vec4f(0,0,0,1.f);
     Texture::SP bgTexture       = 0;
@@ -70,6 +79,10 @@ namespace BARNEY_NS {
     /*! ambient occlusion control, see DD::aoRadius/aoSamples. */
     float       aoRadius        = 0.f;
     int         aoSamples       = 0;
+    float       gladstoneDale    = 1e-4f;
+    vec3f       knife            = vec3f(1.f,0.f,0.f);
+    float       schlierenOpacity = 0.9f;
+    vec2f       schlierenRange   = vec2f(-1.f,1.f);
   };
 
 }

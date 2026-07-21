@@ -572,6 +572,16 @@ namespace BARNEY_NS {
           // PRIMARY ray that didn't hit anything -> background
           // ----------------------------------------------------------------
           fragment = primaryRayMissColor(world,renderer,ray);
+          if (ray.isSchlieren) {
+            float e = renderer.gladstoneDale * dot(renderer.knife,ray.schlieren);
+            float lo = renderer.schlierenRange.x;
+            float hi = renderer.schlierenRange.y;
+            float intensity = (e - lo) / (hi - lo);
+            intensity = max(0.f,min(1.f,intensity));
+            vec3f sColor = vec3f(intensity);
+            fragment = sColor * renderer.schlierenOpacity
+                     + fragment * (1.f - renderer.schlierenOpacity);
+          }
         } else {
           // ----------------------------------------------------------------
           // SECONDARY ray that didn't hit anything -> env-light

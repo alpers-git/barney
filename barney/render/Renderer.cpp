@@ -31,6 +31,10 @@ namespace BARNEY_NS {
     cutPlane        = staged.cutPlane;
     aoRadius        = staged.aoRadius;
     aoSamples       = staged.aoSamples;
+    gladstoneDale    = staged.gladstoneDale;
+    knife            = staged.knife;
+    schlierenOpacity = staged.schlierenOpacity;
+    schlierenRange   = staged.schlierenRange;
   }
   
   bool Renderer::setObject(const std::string &member,
@@ -57,9 +61,28 @@ namespace BARNEY_NS {
       staged.aoRadius = value;
       return true;
     }
+    if (member == "gladstoneDale") {
+      staged.gladstoneDale = value;
+      return true;
+    }
+    if (member == "schlierenOpacity") {
+      staged.schlierenOpacity = value;
+      return true;
+    }
     return false;
   }
-  
+
+  bool Renderer::set3f(const std::string &member, const vec3f &value)
+  {
+    if (Object::set3f(member,value))
+      return true;
+    if (member == "knife") {
+      staged.knife = value;
+      return true;
+    }
+    return false;
+  }
+
   bool Renderer::set1i(const std::string &member, const int &value)
   {
     if (Object::set1i(member,value))
@@ -91,6 +114,10 @@ namespace BARNEY_NS {
       staged.cutPlane = value;
       return true;
     }
+    if (member == "schlierenRange") {
+      staged.schlierenRange = vec2f(value.x,value.y);
+      return true;
+    }
     return false;
   }
 
@@ -106,6 +133,10 @@ namespace BARNEY_NS {
     dd.cutPlane = cutPlane;
     dd.aoRadius = aoRadius;
     dd.aoSamples = aoSamples;
+    dd.gladstoneDale = gladstoneDale;
+    dd.knife = knife;
+    dd.schlierenOpacity = schlierenOpacity;
+    dd.schlierenRange = schlierenRange;
     return dd;
   }
   
