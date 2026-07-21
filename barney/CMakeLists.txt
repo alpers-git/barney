@@ -100,7 +100,9 @@ set(HOST_SOURCES
   umesh/common/UMeshField.cu
   umesh/mc/UMeshCuBQLSampler.h
   umesh/mc/UMeshCuBQLSampler.cu
- 
+  umesh/face/FaceSchlierenAccel.h
+  umesh/face/FaceSchlierenAccel.cu
+
   amr/BlockStructuredCuBQLSampler.cu
   amr/BlockStructuredField.cu
   
@@ -203,6 +205,7 @@ set(DEVICE_PROGRAM_SOURCES
   volume/StructuredData.dev.cu
   volume/NanoVDB.dev.cu
   umesh/mc/UMeshMC.dev.cu
+  umesh/face/FaceSchlieren.dev.cu
   amr/BlockStructuredMC.dev.cu
   kernels/traceRays.dev.cu
 )

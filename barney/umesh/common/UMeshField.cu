@@ -7,6 +7,7 @@
 #include "barney/umesh/common/UMeshField.h"
 #include "barney/Context.h"
 #include "barney/umesh/mc/UMeshCuBQLSampler.h"
+#include "barney/umesh/face/FaceSchlierenAccel.h"
 #include "barney/volume/MCGrid.cuh"
 // #include "barney/umesh/os/AWT.h"
 #if RTC_DEVICE_CODE
@@ -25,6 +26,8 @@ namespace BARNEY_NS {
   RTC_IMPORT_USER_GEOM(/*file*/UMeshMC,/*name*/UMeshMC_Schlieren,
                        /*geomtype device data */
                        MCSchlierenAccel<UMeshCuBQLSampler>::DD,false,false);
+  RTC_IMPORT_TRIANGLES_GEOM(/*file*/FaceSchlieren,/*name*/FaceSchlieren,
+                            FaceSchlierenAccel::DD,true,false);
 
   UMeshField::PLD *UMeshField::getPLD(Device *device) 
   {
@@ -361,6 +364,9 @@ namespace BARNEY_NS {
 #else
     auto sampler
       = std::make_shared<UMeshCuBQLSampler>(this);
+    if (volume->renderMode == 2)
+      return std::make_shared<FaceSchlierenAccel>
+        (volume, this, createGeomType_FaceSchlieren);
     if (volume->renderMode == 1)
       return std::make_shared<MCSchlierenAccel<UMeshCuBQLSampler>>
         (volume,

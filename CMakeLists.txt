@@ -381,6 +381,7 @@ set(_BARNEY_INTERNAL_STATIC_TARGETS
     cuBQL_cuda_float3_static
     barney-traceRays-ptx barney-Spheres-ptx barney-Triangles-ptx
     barney-UMeshMC-ptx  barney-Capsules-ptx barney-Cylinders-ptx
+    barney-FaceSchlieren-ptx
     barney-BlockStructuredMC-ptx barney-Cones-ptx
     barney-StructuredData-ptx    barney-NanoVDB-ptx)
 foreach(_t ${_BARNEY_INTERNAL_STATIC_TARGETS})
