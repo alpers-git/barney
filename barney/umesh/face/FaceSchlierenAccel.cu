@@ -135,22 +135,26 @@ namespace BARNEY_NS {
       const int opp[4]   = { iv[0], iv[1], iv[2], iv[3] };
       for (int f = 0; f < 4; ++f) {
         const int a = fv[f][0], b = fv[f][1], cc = fv[f][2];
-        const vec3f N = cross(h_vertices[b] - h_vertices[a],
-                              h_vertices[cc] - h_vertices[a]);
-        const bool tetOnPlus = dot(h_vertices[opp[f]] - h_vertices[a], N) > 0.f;
         const FaceKey key = sortedKey(a, b, cc);
         auto it = faceMap.find(key);
+        int fi;
         if (it == faceMap.end()) {
-          const int fi = (int)h_faces.size();
+          fi = (int)h_faces.size();
           h_faces.push_back(vec3i(a, b, cc));
-          vec2i cells(-1, -1);
-          (tetOnPlus ? cells.y : cells.x) = c;
-          h_faceCells.push_back(cells);
+          h_faceCells.push_back(vec2i(-1, -1));
           faceMap.emplace(key, fi);
         } else {
-          vec2i &cells = h_faceCells[it->second];
-          (tetOnPlus ? cells.y : cells.x) = c;
+          fi = it->second;
         }
+        // Orient this cell against the STORED triangle's winding, so both cells
+        // sharing an interior face agree on which side is +N (the two tets
+        // enumerate the shared face with opposite winding, so deriving N from
+        // this cell's own winding would flip the sign for the second cell).
+        const vec3i st = h_faces[fi];
+        const vec3f N = cross(h_vertices[st.y] - h_vertices[st.x],
+                              h_vertices[st.z] - h_vertices[st.x]);
+        const bool cellOnPlus = dot(h_vertices[opp[f]] - h_vertices[st.x], N) > 0.f;
+        (cellOnPlus ? h_faceCells[fi].y : h_faceCells[fi].x) = c;
       }
     }
     if (numNonTet > 0)
