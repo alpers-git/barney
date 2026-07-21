@@ -211,6 +211,10 @@ namespace BARNEY_NS {
       scalarsArePerVertex = true;
       return true;
     }
+    if (member == "vertex.gradient") {
+      gradients = value->as<PODData>();
+      return true;
+    }
     if (member == "index") {
       indices = value->as<PODData>();
       return true;
@@ -326,6 +330,7 @@ namespace BARNEY_NS {
     (ScalarField::DD &)dd = ScalarField::getDD(device);
     dd.vertices    = (const vec3f *)vertices->getDD(device);
     dd.scalars     = (const float *)scalars->getDD(device);
+    dd.gradients   = gradients ? (const vec3f *)gradients->getDD(device) : nullptr;
     dd.indices     = (const int   *)indices->getDD(device);
     dd.cellOffsets = (const int   *)cellOffsets->getDD(device);
     dd.cellTypes   = (const uint8_t *)cellTypes->getDD(device);

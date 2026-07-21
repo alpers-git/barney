@@ -90,8 +90,16 @@ namespace BARNEY_NS {
                      vec3f P, bool
                      dbg=false) const;
 
+      inline __rtc_device
+      bool eltScalarGrad(float &retVal,
+                         vec3f &retGrad,
+                         uint32_t cellIdx,
+                         vec3f P,
+                         bool dbg = false) const;
+
       const vec3f       *vertices;
       const float       *scalars;
+      const vec3f       *gradients = nullptr;
       const int         *indices;
       const int         *cellOffsets;
       const uint8_t     *cellTypes;
@@ -137,6 +145,7 @@ namespace BARNEY_NS {
 
     /*! @{ set by the user, as paramters */
     PODData::SP scalars;
+    PODData::SP gradients;
     PODData::SP indices;
     PODData::SP cellOffsets;
     PODData::SP/*uint8_t*/ cellTypes;
@@ -316,5 +325,81 @@ namespace BARNEY_NS {
     vec4f v7(vertices[indices[7]],scalars[scalarsArePerVertex?indices[7]:cellIdx]);
     return intersectHexEXT(retVal, P, v0,v1,v2,v3,v4,v5,v6,v7, dbg);
   }
-  
+
+  inline __rtc_device
+  bool UMeshField::DD::eltScalarGrad(float &retVal,
+                                     vec3f &retGrad,
+                                     uint32_t cellIdx,
+                                     vec3f P,
+                                     bool dbg) const
+  {
+    retGrad = vec3f(0.f);
+    if (!gradients || !scalarsArePerVertex)
+      return eltScalar(retVal,cellIdx,P,dbg);
+
+    int ofs0 = cellOffsets[cellIdx];
+    uint8_t cellType = cellTypes[cellIdx];
+    switch (cellType) {
+    case _ANARI_TET:
+    case _VTK_TET: {
+      vec4i idx = *(const vec4i *)&this->indices[ofs0];
+      vec4f v0(vertices[idx.x],scalars[idx.x]);
+      vec4f v1(vertices[idx.y],scalars[idx.y]);
+      vec4f v2(vertices[idx.z],scalars[idx.z]);
+      vec4f v3(vertices[idx.w],scalars[idx.w]);
+      float t3 = evalToImplicitPlane(P,v0,v1,v2); if (t3 < 0.f) return false;
+      float t2 = evalToImplicitPlane(P,v0,v3,v1); if (t2 < 0.f) return false;
+      float t1 = evalToImplicitPlane(P,v0,v2,v3); if (t1 < 0.f) return false;
+      float t0 = evalToImplicitPlane(P,v1,v3,v2); if (t0 < 0.f) return false;
+      float scale = 1.f/(t0+t1+t2+t3);
+      retVal = scale*(t0*v0.w + t1*v1.w + t2*v2.w + t3*v3.w);
+      retGrad = scale*(t0*gradients[idx.x] + t1*gradients[idx.y]
+                     + t2*gradients[idx.z] + t3*gradients[idx.w]);
+      return true;
+    }
+    case _ANARI_PYR:
+    case _VTK_PYR: {
+      UMeshField::ints<5> idx = *(const UMeshField::ints<5> *)&this->indices[ofs0];
+      vec4f v0(vertices[idx[0]],scalars[idx[0]]);
+      vec4f v1(vertices[idx[1]],scalars[idx[1]]);
+      vec4f v2(vertices[idx[2]],scalars[idx[2]]);
+      vec4f v3(vertices[idx[3]],scalars[idx[3]]);
+      vec4f v4(vertices[idx[4]],scalars[idx[4]]);
+      vec3f G[5] = { gradients[idx[0]], gradients[idx[1]], gradients[idx[2]],
+                     gradients[idx[3]], gradients[idx[4]] };
+      return intersectPyrEXT(retVal,P,v0,v1,v2,v3,v4,G,&retGrad);
+    }
+    case _ANARI_PRISM:
+    case _VTK_PRISM: {
+      UMeshField::ints<6> idx = *(const UMeshField::ints<6> *)&this->indices[ofs0];
+      vec4f v0(vertices[idx[0]],scalars[idx[0]]);
+      vec4f v1(vertices[idx[1]],scalars[idx[1]]);
+      vec4f v2(vertices[idx[2]],scalars[idx[2]]);
+      vec4f v3(vertices[idx[3]],scalars[idx[3]]);
+      vec4f v4(vertices[idx[4]],scalars[idx[4]]);
+      vec4f v5(vertices[idx[5]],scalars[idx[5]]);
+      vec3f G[6] = { gradients[idx[0]], gradients[idx[1]], gradients[idx[2]],
+                     gradients[idx[3]], gradients[idx[4]], gradients[idx[5]] };
+      return intersectPrismEXT(retVal,P,v0,v1,v2,v3,v4,v5,G,&retGrad);
+    }
+    case _ANARI_HEX:
+    case _VTK_HEX: {
+      UMeshField::ints<8> idx = *(const UMeshField::ints<8> *)&this->indices[ofs0];
+      vec4f v0(vertices[idx[0]],scalars[idx[0]]);
+      vec4f v1(vertices[idx[1]],scalars[idx[1]]);
+      vec4f v2(vertices[idx[2]],scalars[idx[2]]);
+      vec4f v3(vertices[idx[3]],scalars[idx[3]]);
+      vec4f v4(vertices[idx[4]],scalars[idx[4]]);
+      vec4f v5(vertices[idx[5]],scalars[idx[5]]);
+      vec4f v6(vertices[idx[6]],scalars[idx[6]]);
+      vec4f v7(vertices[idx[7]],scalars[idx[7]]);
+      vec3f G[8] = { gradients[idx[0]], gradients[idx[1]], gradients[idx[2]],
+                     gradients[idx[3]], gradients[idx[4]], gradients[idx[5]],
+                     gradients[idx[6]], gradients[idx[7]] };
+      return intersectHexEXT(retVal,P,v0,v1,v2,v3,v4,v5,v6,v7,dbg,G,&retGrad);
+    }
+    }
+    return false;
+  }
+
 }

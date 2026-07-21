@@ -84,7 +84,9 @@ namespace BARNEY_NS {
                        const vec4f _v1,
                        const vec4f _v2,
                        const vec4f _v3,
-                       const vec4f _v4
+                       const vec4f _v4,
+                       const vec3f *G = nullptr,
+                       vec3f *gradOut = nullptr
                        )
   {
 
@@ -157,10 +159,13 @@ namespace BARNEY_NS {
                          pcoords[2] >= lowerlimit && pcoords[2] <= upperlimit)) {
       // Evaluation
       float val = 0.f;
+      vec3f grad = vec3f(0.f);
       for (int i = 0; i < 5; i++) {
         val += weights[i] * V[i].w;
+        if (G) grad = grad + weights[i] * G[i];
       }
       value = val;
+      if (gradOut) *gradOut = grad;
 
       return true;
     }
@@ -216,7 +221,9 @@ namespace BARNEY_NS {
                          const vec4f _v2,
                          const vec4f _v3,
                          const vec4f _v4,
-                         const vec4f _v5)
+                         const vec4f _v5,
+                         const vec3f *G = nullptr,
+                         vec3f *gradOut = nullptr)
   {
 
     #define PRIMS_DIVERGED               1e6f
@@ -290,10 +297,13 @@ namespace BARNEY_NS {
                          pcoords[0] + pcoords[1] <= upperlimit)) {
       // Evaluation
       float val = 0.f;
+      vec3f grad = vec3f(0.f);
       for (int i=0; i<6; ++i) {
         val += weights[i] * V[i].w;
+        if (G) grad = grad + weights[i] * G[i];
       }
       value = val;
+      if (gradOut) *gradOut = grad;
 
       return true;
     }
@@ -372,7 +382,9 @@ namespace BARNEY_NS {
                        const vec4f v5,
                        const vec4f v6,
                        const vec4f v7,
-                       bool dbg=false)
+                       bool dbg=false,
+                       const vec3f *G = nullptr,
+                       vec3f *gradOut = nullptr)
   {
     #define HEX_DIVERGED               1e6f
     #define HEX_MAX_ITERATION          10
@@ -461,10 +473,13 @@ namespace BARNEY_NS {
                          pcoords[2] >= lowerlimit && pcoords[2] <= upperlimit)) {
       // Evaluation
       float val = 0.f;
+      vec3f grad = vec3f(0.f);
       for (int i=0; i<8; ++i) {
         val += weights[i] * V[i].w;
+        if (G) grad = grad + weights[i] * G[i];
       }
       value = val;
+      if (gradOut) *gradOut = grad;
       if (dbg) printf("hex value %f\n",val);
       return true;
     }
