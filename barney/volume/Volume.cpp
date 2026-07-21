@@ -26,9 +26,16 @@ namespace BARNEY_NS {
   {
     if (member == "userID") {
       userID = value;
-      return true; 
-    } 
-    
+      return true;
+    }
+    if (member == "renderMode") {
+      if (value != renderMode) {
+        renderMode = value;
+        accel = sf->createAccel(this);
+      }
+      return true;
+    }
+
     return false;
   }
   

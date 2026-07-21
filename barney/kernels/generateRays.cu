@@ -167,6 +167,8 @@ namespace BARNEY_NS {
       ray.clearHit();
       ray.isShadowRay = false;
       ray.isInMedium  = false;
+      ray.schlieren   = vec3f(0.f);
+      ray.isSchlieren = 0;
       ray.tMax        = 1e30f;
       // Apply cutting plane (disabled if w < -1e28f)
       if (renderer.cutPlane.w > -1e28f) {

@@ -73,6 +73,7 @@ namespace BARNEY_NS {
         issues */
       vec3f       P;
       vec3h       N;
+      vec3f       schlieren;
       struct {
         /*! type of bsdf in the hitBSDF; if this is set to NONE the
           ray didn't have any hit yet */
@@ -85,6 +86,7 @@ namespace BARNEY_NS {
         uint16_t isShadowRay: 1;
         uint16_t crosshair  : 1;
         uint16_t _dbg       : 1;
+        uint16_t isSchlieren: 1;
       };
       inline __rtc_device bool dbg() const {
         return _dbg;

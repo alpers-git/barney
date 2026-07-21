@@ -108,6 +108,7 @@ namespace BARNEY_NS {
     TransferFunction xf;
     DevGroup::SP const devices;
     int userID = 0;
+    int renderMode = 0;
     
     struct PLD {
       std::vector<rtc::Group *> generatedGroups;
