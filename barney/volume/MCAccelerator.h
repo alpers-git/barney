@@ -776,12 +776,19 @@ namespace BARNEY_NS {
                 float segLo = max(t0,tRange.lower);
                 float segHi = min(t1,tRange.upper);
                 if (segLo >= segHi) return true;
-                // Skip macrocells of constant density: the gradient is zero
-                // there, so they add nothing to the integral. This drops the
-                // whole undisturbed freestream, where most of the cost lives.
+                // Skip macrocells whose density barely varies relative to the
+                // whole field (the freestream carries ~1e-3 numerical noise, so
+                // an absolute threshold never fires): their gradient is
+                // negligible, so they add nothing but cost.
                 range1f mcRange = self.mcGrid.scalarRange(cellIdx);
-                if (mcRange.upper - mcRange.lower <= 1e-6f) { tPrev = NAN; return true; }
-                const int numSteps = 8;
+                float cellSpan = mcRange.upper - mcRange.lower;
+                float refSpan = self.volume.xf.domain.upper - self.volume.xf.domain.lower;
+                if (refSpan > 0.f && cellSpan <= 0.01f * refSpan) { tPrev = NAN; return true; }
+                // Concentrate samples where the field actually varies: 2 steps
+                // in weak cells up to 8 in the strongest (shocks).
+                int numSteps = 2;
+                if (refSpan > 0.f)
+                  numSteps = 2 + (int)(6.f * min(cellSpan / refSpan, 1.f));
                 for (int i=0;i<=numSteps;i++) {
                   float t = lerp_l(i/float(numSteps),segLo,segHi);
                   vec3f P = obj_org + t*obj_dir;
