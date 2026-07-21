@@ -776,6 +776,11 @@ namespace BARNEY_NS {
                 float segLo = max(t0,tRange.lower);
                 float segHi = min(t1,tRange.upper);
                 if (segLo >= segHi) return true;
+                // Skip macrocells of constant density: the gradient is zero
+                // there, so they add nothing to the integral. This drops the
+                // whole undisturbed freestream, where most of the cost lives.
+                range1f mcRange = self.mcGrid.scalarRange(cellIdx);
+                if (mcRange.upper - mcRange.lower <= 1e-6f) { tPrev = NAN; return true; }
                 const int numSteps = 8;
                 for (int i=0;i<=numSteps;i++) {
                   float t = lerp_l(i/float(numSteps),segLo,segHi);
