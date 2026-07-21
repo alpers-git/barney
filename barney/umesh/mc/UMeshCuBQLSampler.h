@@ -23,7 +23,9 @@ namespace BARNEY_NS {
     
     struct DD : public UMeshField::DD {
       inline __rtc_device float sample(vec3f P, bool dbg = false) const;
-      
+      inline __rtc_device bool sampleWithGradient(vec3f P, float &value,
+                                                  vec3f &grad, bool dbg = false) const;
+
       bvh_t bvh;
     };
     DD getDD(Device *device);
@@ -65,7 +67,27 @@ namespace BARNEY_NS {
     cuBQL::fixedBoxQuery::forEachPrim(lambda,bvh,box);
     return retVal;
   }
-  
+
+  inline __rtc_device
+  bool UMeshCuBQLSampler::DD::sampleWithGradient(vec3f P, float &value,
+                                                 vec3f &grad, bool dbg) const
+  {
+    typename bvh_t::box_t box; box.lower = box.upper = to_cubql(P);
+
+    bool found = false;
+    auto lambda = [this,P,&value,&grad,&found,dbg]
+      (const uint32_t primID)
+    {
+      if (this->eltScalarGrad(value,grad,primID,P,dbg)) {
+        found = true;
+        return CUBQL_TERMINATE_TRAVERSAL;
+      }
+      return CUBQL_CONTINUE_TRAVERSAL;
+    };
+    cuBQL::fixedBoxQuery::forEachPrim(lambda,bvh,box);
+    return found;
+  }
+
 } // ::BARNEY_NS
 
 

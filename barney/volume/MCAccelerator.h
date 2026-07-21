@@ -630,4 +630,174 @@ namespace BARNEY_NS {
               );
   }
 #endif
+
+  template<typename SFSampler>
+  struct MCSchlierenAccel : public VolumeAccel
+  {
+    struct DD
+    {
+      Volume::DD<SFSampler> volume;
+      MCGrid::DD            mcGrid;
+    };
+
+    struct PLD {
+      rtc::Geom  *geom  = 0;
+      rtc::Group *group = 0;
+    };
+    PLD *getPLD(Device *device)
+    { return &perLogical[device->contextRank()]; }
+    std::vector<PLD> perLogical;
+
+    DD getDD(Device *device)
+    {
+      DD dd;
+      dd.volume = volume->getDD(device,sfSampler);
+      dd.mcGrid = mcGrid->getDD(device);
+      return dd;
+    }
+
+    MCSchlierenAccel(Volume *volume,
+                     GeomTypeCreationFct creatorFct,
+                     const std::shared_ptr<SFSampler> &sfSampler);
+    ~MCSchlierenAccel() override;
+
+    GeomTypeCreationFct const creatorFct;
+
+    void build(bool full_rebuild) override;
+
+#if BARNEY_DEVICE_PROGRAM
+    static inline __rtc_device
+    void boundsProg(const rtc::TraceInterface &ti,
+                    const void *geomData,
+                    owl::common::box3f &bounds,
+                    const int32_t primID);
+    static inline __rtc_device
+    void isProg(rtc::TraceInterface &ti);
+#endif
+
+    MCGrid::SP mcGrid;
+    const std::shared_ptr<SFSampler> sfSampler;
+  };
+
+  template<typename SFSampler>
+  MCSchlierenAccel<SFSampler>::
+  MCSchlierenAccel(Volume *volume,
+                   GeomTypeCreationFct creatorFct,
+                   const std::shared_ptr<SFSampler> &sfSampler)
+    : VolumeAccel(volume),
+      sfSampler(sfSampler),
+      creatorFct(creatorFct)
+  {
+    perLogical.resize(devices->numLogical);
+  }
+
+  template<typename SFSampler>
+  MCSchlierenAccel<SFSampler>::~MCSchlierenAccel()
+  {
+    for (auto device : *devices) {
+      SetActiveGPU forDuration(device);
+      PLD *pld = getPLD(device);
+      if (pld->group) { device->rtc->freeGroup(pld->group); pld->group = 0; }
+      if (pld->geom)  { device->rtc->freeGeom(pld->geom);   pld->geom = 0; }
+    }
+  }
+
+  template<typename SFSampler>
+  void MCSchlierenAccel<SFSampler>::build(bool full_rebuild)
+  {
+    mcGrid = volume->sf->getMCs();
+    sfSampler->build();
+
+    for (auto device : *devices) {
+      SetActiveGPU forDuration(device);
+      PLD *pld = getPLD(device);
+      if (!pld->geom) {
+        rtc::GeomType *gt = device->geomTypes.get(creatorFct);
+        pld->geom = gt->createGeom();
+        pld->geom->setPrimCount(1);
+      }
+      rtc::Geom *geom = pld->geom;
+      DD dd = getDD(device);
+      geom->setDD(&dd);
+      if (!pld->group)
+        pld->group = device->rtc->createUserGeomsGroup({geom});
+      pld->group->buildAccel();
+      Volume::PLD *volumePLD = volume->getPLD(device);
+      if (volumePLD->generatedGroups.empty())
+        volumePLD->generatedGroups = { pld->group };
+    }
+  }
+
+#if BARNEY_DEVICE_PROGRAM
+  template<typename SFSampler>
+  inline __rtc_device
+  void MCSchlierenAccel<SFSampler>::boundsProg(const rtc::TraceInterface &ti,
+                                               const void *geomData,
+                                               owl::common::box3f &bounds,
+                                               const int32_t primID)
+  {
+    const DD &self = *(DD*)geomData;
+    bounds = self.volume.sfCommon.worldBounds;
+  }
+
+  template<typename SFSampler>
+  inline __rtc_device
+  void MCSchlierenAccel<SFSampler>::isProg(rtc::TraceInterface &ti)
+  {
+    const DD &self
+      = *(typename MCSchlierenAccel<SFSampler>::DD*)ti.getProgramData();
+    Ray &ray = *(Ray*)ti.getPRD();
+
+    box3f bounds = self.volume.sfCommon.worldBounds;
+    range1f tRange = { ti.getRayTmin(), ti.getRayTmax() };
+
+    vec3f obj_org = ti.getObjectRayOrigin();
+    vec3f obj_dir = ti.getObjectRayDirection();
+
+    auto objRay = ray;
+    objRay.org = obj_org;
+    objRay.dir = obj_dir;
+    if (!boxTest(objRay,tRange,bounds))
+      return;
+
+    vec3f mcGridOrigin  = self.mcGrid.gridOrigin;
+    vec3f mcGridSpacing = self.mcGrid.gridSpacing;
+    vec3f dda_org = (obj_org - mcGridOrigin) * rcp(mcGridSpacing);
+    vec3f dda_dir = obj_dir * rcp(mcGridSpacing);
+
+    vec3f eps   = vec3f(0.f);
+    vec3f fPrev = vec3f(0.f);
+    float tPrev = NAN;
+
+    dda::dda3(dda_org,dda_dir,tRange.upper,
+              vec3ui(self.mcGrid.dims),
+              [&](const vec3i &cellIdx, float t0, float t1) -> bool
+              {
+                float segLo = max(t0,tRange.lower);
+                float segHi = min(t1,tRange.upper);
+                if (segLo >= segHi) return true;
+                const int numSteps = 8;
+                for (int i=0;i<=numSteps;i++) {
+                  float t = lerp_l(i/float(numSteps),segLo,segHi);
+                  vec3f P = obj_org + t*obj_dir;
+                  float rho; vec3f grad;
+                  if (!self.volume.sfSampler.sampleWithGradient(P,rho,grad))
+                    continue;
+                  if (!isnan(tPrev)) {
+                    float dt = t - tPrev;
+                    eps = eps + 0.5f*(fPrev + grad)*dt;
+                  }
+                  fPrev = grad;
+                  tPrev = t;
+                }
+                return true;
+              },
+              /*NO debug:*/false
+              );
+
+    eps = eps * length(obj_dir);
+    ray.schlieren = ray.schlieren + eps;
+    ray.isSchlieren = 1;
+  }
+#endif
 }

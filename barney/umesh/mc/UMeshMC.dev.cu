@@ -87,12 +87,46 @@ namespace BARNEY_NS {
   
   
   
+  struct MCSchlieren_UMesh_Programs {
+    static inline __rtc_device
+    void bounds(const rtc::TraceInterface &ti,
+                const void *geomData,
+                owl::common::box3f &bounds,
+                const int32_t primID)
+    {
+#if RTC_DEVICE_CODE
+      MCSchlierenAccel<UMeshCuBQLSampler>
+        ::boundsProg(ti,geomData,bounds,primID);
+#endif
+    }
+
+    static inline __rtc_device
+    void intersect(rtc::TraceInterface &ti)
+    {
+#if RTC_DEVICE_CODE
+      MCSchlierenAccel<UMeshCuBQLSampler>
+        ::isProg(ti);
+#endif
+    }
+
+    static inline __rtc_device
+    void closestHit(rtc::TraceInterface &ti)
+    { /* nothing to do */ }
+
+    static inline __rtc_device
+    void anyHit(rtc::TraceInterface &ti)
+    { /* nothing to do */ }
+  };
+
   using UMeshMC = MCVolumeAccel<UMeshCuBQLSampler>;
   using UMeshMC_Iso = MCIsoSurfaceAccel<UMeshCuBQLSampler>;
+  using UMeshMC_Schlieren = MCSchlierenAccel<UMeshCuBQLSampler>;
 
   RTC_EXPORT_USER_GEOM(UMeshMC,UMeshMC::DD,UMeshMC_Programs,false,false);
   RTC_EXPORT_USER_GEOM(UMeshMC_Iso,UMeshMC_Iso::DD,
                        MCIsoAccel_UMesh_Programs,false,false);
+  RTC_EXPORT_USER_GEOM(UMeshMC_Schlieren,UMeshMC_Schlieren::DD,
+                       MCSchlieren_UMesh_Programs,false,false);
 }
 
 

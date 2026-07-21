@@ -22,7 +22,10 @@ namespace BARNEY_NS {
   RTC_IMPORT_USER_GEOM(/*file*/UMeshMC,/*name*/UMeshMC_Iso,
                        /*geomtype device data */
                        MCIsoSurfaceAccel<UMeshCuBQLSampler>::DD,false,false);
-  
+  RTC_IMPORT_USER_GEOM(/*file*/UMeshMC,/*name*/UMeshMC_Schlieren,
+                       /*geomtype device data */
+                       MCSchlierenAccel<UMeshCuBQLSampler>::DD,false,false);
+
   UMeshField::PLD *UMeshField::getPLD(Device *device) 
   {
     assert(device);
@@ -358,6 +361,11 @@ namespace BARNEY_NS {
 #else
     auto sampler
       = std::make_shared<UMeshCuBQLSampler>(this);
+    if (volume->renderMode == 1)
+      return std::make_shared<MCSchlierenAccel<UMeshCuBQLSampler>>
+        (volume,
+         createGeomType_UMeshMC_Schlieren,
+         sampler);
     return std::make_shared<MCVolumeAccel<UMeshCuBQLSampler>>
       (volume,
        createGeomType_UMeshMC,
