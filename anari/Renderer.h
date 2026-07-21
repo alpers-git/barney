@@ -40,6 +40,10 @@ namespace barney_device {
     bool m_upscale{false};
     anari::math::float4 m_background{0.f, 0.f, 0.f, 1.f};
     anari::math::float4 m_cutPlane{0.f, 0.f, 0.f, -1e30f};
+    float m_gladstoneDale{1e-4f};
+    anari::math::float3 m_knife{1.f, 0.f, 0.f};
+    float m_schlierenOpacity{0.9f};
+    anari::math::float2 m_schlierenRange{-1.f, 1.f};
     helium::ChangeObserverPtr<Array2D> m_backgroundImage;
   };
 

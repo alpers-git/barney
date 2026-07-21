@@ -30,6 +30,10 @@ void Renderer::commitParameters()
   m_background = getParam<math::float4>("background", math::float4(0, 0, 0, 1));
   m_backgroundImage = getParamObject<Array2D>("background");
   m_cutPlane = getParam<math::float4>("cutPlane", math::float4(0, 0, 0, 0));
+  m_gladstoneDale = getParam<float>("gladstoneDale", 1e-4f);
+  m_knife = getParam<math::float3>("knife", math::float3(1, 0, 0));
+  m_schlierenOpacity = getParam<float>("schlierenOpacity", 0.9f);
+  m_schlierenRange = getParam<math::float2>("schlierenRange", math::float2(-1, 1));
 }
 
 void Renderer::finalize()
@@ -42,6 +46,11 @@ void Renderer::finalize()
   bnSet1i(barneyRenderer, "aoSamples", m_aoSamples);
   bnSet4f(barneyRenderer, "cutPlane",
           m_cutPlane.x, m_cutPlane.y, m_cutPlane.z, m_cutPlane.w);
+  bnSet1f(barneyRenderer, "gladstoneDale", m_gladstoneDale);
+  bnSet3f(barneyRenderer, "knife", m_knife.x, m_knife.y, m_knife.z);
+  bnSet1f(barneyRenderer, "schlierenOpacity", m_schlierenOpacity);
+  bnSet4f(barneyRenderer, "schlierenRange",
+          m_schlierenRange.x, m_schlierenRange.y, 0.f, 0.f);
 
   if (m_backgroundImage) {
     int sx = m_backgroundImage->size().x;
