@@ -262,6 +262,7 @@ namespace barney_device {
   {
     if (m_bnData.vertices)       bnRelease(m_bnData.vertices);
     if (m_bnData.scalars)        bnRelease(m_bnData.scalars);
+    if (m_bnData.gradient)       bnRelease(m_bnData.gradient);
     if (m_bnData.indices)        bnRelease(m_bnData.indices);
     if (m_bnData.cellType)       bnRelease(m_bnData.cellType);
     if (m_bnData.elementOffsets) bnRelease(m_bnData.elementOffsets);
@@ -273,6 +274,7 @@ namespace barney_device {
 
     m_params.vertexPosition = getParamObject<helium::Array1D>("vertex.position");
     m_params.vertexData = getParamObject<helium::Array1D>("vertex.data");
+    m_params.vertexGradient = getParamObject<helium::Array1D>("vertex.gradient");
     m_params.cellData = getParamObject<helium::Array1D>("cell.data");
     m_params.index = getParamObject<helium::Array1D>("index");
     m_params.cellType = getParamObject<helium::Array1D>("cell.type");
@@ -434,6 +436,15 @@ namespace barney_device {
                 (const int *)m_params.cellBegin->data());
     }
 
+    if (m_params.vertexGradient) {
+      if (!m_bnData.gradient)
+        m_bnData.gradient = bnDataCreate(context, slot, BN_FLOAT3, numVertices,
+                                         m_params.vertexGradient->data());
+      else
+        bnDataSet(m_bnData.gradient, numVertices,
+                  m_params.vertexGradient->data());
+    }
+
     bnSetData(sf, "vertex.position", m_bnData.vertices);
     if (vertexData) {
       // this will atomatically set cell.data to 0 on barney side
@@ -445,6 +456,8 @@ namespace barney_device {
     bnSetData(sf, "index", m_bnData.indices);
     bnSetData(sf, "cell.index", m_bnData.elementOffsets);
     bnSetData(sf, "cell.type", m_bnData.cellType);
+    if (m_params.vertexGradient)
+      bnSetData(sf, "vertex.gradient", m_bnData.gradient);
     bnCommit(sf);
   }
 

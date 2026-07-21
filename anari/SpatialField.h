@@ -68,6 +68,7 @@ namespace barney_device {
       Parameters(helium::BaseObject *observer)
         : vertexPosition(observer),
           vertexData(observer),
+          vertexGradient(observer),
           cellData(observer),
           index(observer),
           cellType(observer),
@@ -75,6 +76,7 @@ namespace barney_device {
       {}
       helium::ChangeObserverPtr<helium::Array1D> vertexPosition;
       helium::ChangeObserverPtr<helium::Array1D> vertexData;
+      helium::ChangeObserverPtr<helium::Array1D> vertexGradient;
       helium::ChangeObserverPtr<helium::Array1D> cellData;
       helium::ChangeObserverPtr<helium::Array1D> index;
       helium::ChangeObserverPtr<helium::Array1D> cellType;
@@ -85,6 +87,7 @@ namespace barney_device {
     {
       BNData vertices{nullptr};
       BNData scalars{nullptr};
+      BNData gradient{nullptr};
       BNData indices{nullptr};
       BNData cellType{nullptr};
       BNData elementOffsets{nullptr};
