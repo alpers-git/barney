@@ -375,14 +375,12 @@ install(EXPORT barney-config
 # its link line. Install them alongside libbarney_static.a so the consumer
 # can name them. Uses install(FILES) rather than install(TARGETS ... EXPORT)
 # to avoid leaking these as part of the barney-config public target set.
+get_property(_BARNEY_PTX_TARGETS GLOBAL PROPERTY BARNEY_PTX_TARGETS)
 set(_BARNEY_INTERNAL_STATIC_TARGETS
     barney_optix barney_mpi_optix
     barney_rtc_optix barney_rtc_cuda_common
     cuBQL_cuda_float3_static
-    barney-traceRays-ptx barney-Spheres-ptx barney-Triangles-ptx
-    barney-UMeshMC-ptx  barney-Capsules-ptx barney-Cylinders-ptx
-    barney-BlockStructuredMC-ptx barney-Cones-ptx
-    barney-StructuredData-ptx    barney-NanoVDB-ptx)
+    ${_BARNEY_PTX_TARGETS})
 foreach(_t ${_BARNEY_INTERNAL_STATIC_TARGETS})
   if (TARGET ${_t})
     install(FILES $<TARGET_FILE:${_t}> DESTINATION ${CMAKE_INSTALL_LIBDIR})

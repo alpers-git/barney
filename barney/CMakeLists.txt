@@ -228,6 +228,7 @@ if (BARNEY_BACKEND_OPTIX)
       SOURCES            ${src}
       )
     target_link_libraries(barney_optix PRIVATE barney-${basename}-ptx)
+    set_property(GLOBAL APPEND PROPERTY BARNEY_PTX_TARGETS barney-${basename}-ptx)
   endforeach()
   set_library_properties(barney_optix)
   target_link_libraries(barney_optix PUBLIC
