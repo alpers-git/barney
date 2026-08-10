@@ -172,9 +172,19 @@ namespace BARNEY_NS {
     grid.gridOrigin  = worldBounds.lower;
     grid.gridSpacing = worldBounds.size() * rcp(vec3f(dims));
     
+    refillMCs(grid);
+  }
+
+  /*! the grid's extent comes from the geometry, which a scalar swap does
+    not touch, so only the per-cell ranges have to be re-rasterized */
+  void UMeshField::refillMCs(MCGrid &grid)
+  {
+    if (!grid.built())
+      return;
+
     grid.clearCells();
-    
-    for (auto device : *devices) 
+
+    for (auto device : *devices)
       __rtc_launch(device->rtc,
                    umeshRasterCells,
                    divRoundUp(numCells,128),128,
@@ -182,7 +192,7 @@ namespace BARNEY_NS {
     for (auto device : *devices)
       device->sync();
   }
-    
+
   bool UMeshField::setData(const std::string &member,
                            const std::shared_ptr<Data> &value)
   {
@@ -283,8 +293,13 @@ namespace BARNEY_NS {
     assert(scalars);
     
     this->numCells = (int)cellOffsets->count;
+
+    /* the scalars may have been re-pointed at a different field since
+       the last commit; the cached macrocell ranges describe the old one */
+    invalidateMCs();
+
     for (auto device : *devices) {
-      PLD *pld = getPLD(device); 
+      PLD *pld = getPLD(device);
       auto rtc = device->rtc;
       SetActiveGPU forDuration(device);
 
@@ -337,13 +352,22 @@ namespace BARNEY_NS {
     return dd;
   }
   
+  /*! one sampler, and therefore one element bvh, for every accel over
+    this field: the volume and iso-surface presentations share it, so
+    switching between them neither rebuilds nor duplicates it */
+  std::shared_ptr<UMeshCuBQLSampler> UMeshField::getSampler()
+  {
+    if (!sampler)
+      sampler = std::make_shared<UMeshCuBQLSampler>(this);
+    return std::static_pointer_cast<UMeshCuBQLSampler>(sampler);
+  }
+
   IsoSurfaceAccel::SP UMeshField::createIsoAccel(IsoSurface *isoSurface) 
   {
-    auto sampler = std::make_shared<UMeshCuBQLSampler>(this);
     return std::make_shared<MCIsoSurfaceAccel<UMeshCuBQLSampler>>
       (isoSurface,
        createGeomType_UMeshMC_Iso,
-       sampler);
+       getSampler());
   }
   
   VolumeAccel::SP UMeshField::createAccel(Volume *volume)
@@ -351,12 +375,10 @@ namespace BARNEY_NS {
 #if 0
     return std::make_shared<AWTAccel>(volume,this);
 #else
-    auto sampler
-      = std::make_shared<UMeshCuBQLSampler>(this);
     return std::make_shared<MCVolumeAccel<UMeshCuBQLSampler>>
       (volume,
        createGeomType_UMeshMC,
-       sampler);
+       getSampler());
 #endif
   }
 }

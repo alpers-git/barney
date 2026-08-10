@@ -265,6 +265,9 @@ namespace barney_device {
     if (m_bnData.indices)        bnRelease(m_bnData.indices);
     if (m_bnData.cellType)       bnRelease(m_bnData.cellType);
     if (m_bnData.elementOffsets) bnRelease(m_bnData.elementOffsets);
+    if (m_bnData.faceIndices)    bnRelease(m_bnData.faceIndices);
+    if (m_bnData.faceOffsets)    bnRelease(m_bnData.faceOffsets);
+    if (m_bnData.cellFaces)      bnRelease(m_bnData.cellFaces);
   }
 
   void UnstructuredField::commitParameters()
@@ -279,6 +282,13 @@ namespace barney_device {
     m_params.cellBegin = getParamObject<helium::Array1D>("cell.begin");
     if (!m_params.cellBegin) // some older apps use "cell.index"
       m_params.cellBegin = getParamObject<helium::Array1D>("cell.index");
+    /* shared-face polyhedral ("NFACE", CGNS NGON_n/NFACE_n style)
+       arrays; if present, cells are lists of signed 1-based face IDs
+       into a shared face pool instead of VTK-style elements */
+    m_params.faceIndex = getParamObject<helium::Array1D>("face.index");
+    m_params.faceBegin = getParamObject<helium::Array1D>("face.begin");
+    m_params.cellFace = getParamObject<helium::Array1D>("cell.face");
+    m_flipOrientation = getParam<bool>("flipOrientation", false);
   }
 
   void UnstructuredField::finalize()
@@ -312,6 +322,30 @@ namespace barney_device {
                     "make much sense in terms of the data; so might "
                     "indicate something is fishy in the application"
                     );
+    }
+
+    /* ---- shared-face polyhedral ("NFACE") path detection ---- */
+    const bool haveAnyNFaceArray
+      = m_params.faceIndex || m_params.faceBegin || m_params.cellFace;
+    const bool isNFace
+      = m_params.faceIndex && m_params.faceBegin && m_params.cellFace
+      && m_params.cellBegin;
+    if (haveAnyNFaceArray && !isNFace) {
+      reportMessage(ANARI_SEVERITY_WARNING,
+                    "shared-face (NFACE) unstructured spatial field "
+                    "requires all of 'face.index', 'face.begin', "
+                    "'cell.face', and 'cell.begin'");
+      return;
+    }
+    if (m_isNFace != isNFace) {
+      m_isNFace = isNFace;
+      // field type changed - drop the barney-side field so it gets
+      // re-created with the right type
+      cleanup();
+    }
+    if (m_isNFace) {
+      finalizeNFace();
+      return;
     }
 
     if (!m_params.index) {
@@ -448,12 +482,161 @@ namespace barney_device {
     bnCommit(sf);
   }
 
+  /*! upload path for shared-face polyhedral ("NFACE", CGNS
+      NGON_n/NFACE_n style) meshes: every face is stored once as a
+      list of 0-based vertex indices ('face.index' pool +
+      'face.begin' offsets), and every cell is a list of signed
+      1-based face IDs ('cell.face' pool + 'cell.begin' offsets),
+      where a positive ID means the face's right-hand-rule normal
+      points out of the cell (set 'flipOrientation' if your data uses
+      the opposite convention). Index/offset arrays may be 32- or
+      64-bit; 64-bit arrays are narrowed host-side (values must fit
+      32 bits). */
+  void UnstructuredField::finalizeNFace()
+  {
+    auto *vertexPositions = m_params.vertexPosition->beginAs<math::float3>();
+    int numVertices = (int)m_params.vertexPosition->size();
+    auto *vertexData =
+      m_params.vertexData ? m_params.vertexData->beginAs<float>() : nullptr;
+    auto *cellData =
+      m_params.cellData ? m_params.cellData->beginAs<float>() : nullptr;
+    if (vertexData) cellData = nullptr;
+    int numScalars =
+      int(cellData ? m_params.cellData->size() : m_params.vertexData->size());
+
+    m_bounds.invalidate();
+    for (int i = 0; i < numVertices; i++)
+      m_bounds.insert(vertexPositions[i]);
+
+    /* accept 32-bit arrays as-is; narrow 64-bit arrays (e.g. CGNS
+       cgsize_t data passed through unconverted) host-side */
+    std::vector<int32_t> narrowed[4];
+    auto asInt32 = [&](const helium::Array1D *arr,
+                       const char *name,
+                       std::vector<int32_t> &store) -> const int32_t * {
+      switch (arr->elementType()) {
+      case ANARI_INT32:
+      case ANARI_UINT32:
+        return (const int32_t *)arr->data();
+      case ANARI_INT64:
+      case ANARI_UINT64: {
+        const int64_t *in = (const int64_t *)arr->data();
+        const size_t count = arr->size();
+        store.resize(count);
+        for (size_t i = 0; i < count; i++) {
+          if (in[i] < INT64_C(-2147483648) || in[i] > INT64_C(2147483647)) {
+            reportMessage(ANARI_SEVERITY_ERROR,
+                          "'unstructured::%s' - 64-bit value out of 32-bit "
+                          "range (we only support 32-bit indexing)", name);
+            return nullptr;
+          }
+          store[i] = (int32_t)in[i];
+        }
+        return store.data();
+      }
+      default:
+        reportMessage(ANARI_SEVERITY_ERROR,
+                      "'unstructured::%s' - unsupported element type "
+                      "(expected (U)INT32 or (U)INT64)", name);
+        return nullptr;
+      }
+    };
+
+    const int32_t *faceIndex = asInt32(m_params.faceIndex.get(),
+                                       "face.index", narrowed[0]);
+    const int32_t *faceBegin = asInt32(m_params.faceBegin.get(),
+                                       "face.begin", narrowed[1]);
+    const int32_t *cellFace  = asInt32(m_params.cellFace.get(),
+                                       "cell.face", narrowed[2]);
+    const int32_t *cellBegin = asInt32(m_params.cellBegin.get(),
+                                       "cell.begin", narrowed[3]);
+    if (!faceIndex || !faceBegin || !cellFace || !cellBegin)
+      return;
+
+    if (m_params.faceBegin->size() < 2 || m_params.cellBegin->size() < 2) {
+      reportMessage(ANARI_SEVERITY_ERROR,
+                    "'unstructured::face.begin'/'cell.begin' must contain "
+                    "numFaces+1/numCells+1 entries");
+      return;
+    }
+
+    //=======================================================
+    // get (or create) and populate bn field
+    //=======================================================
+
+    int slot = deviceState()->slot;
+    auto context = deviceState()->tether->context;
+
+    BNScalarField sf = getBarneyScalarField();
+
+    if (!m_bnData.vertices) {
+      m_bnData.vertices
+        = bnDataCreate(context, slot, BN_FLOAT3, numVertices, vertexPositions);
+    } else {
+      bnDataSet(m_bnData.vertices, numVertices, vertexPositions);
+    }
+
+    if (!m_bnData.scalars) {
+      m_bnData.scalars
+        = bnDataCreate(context, slot, BN_FLOAT, numScalars,
+                       vertexData ? vertexData : cellData);
+    } else {
+      bnDataSet(m_bnData.scalars, numScalars, vertexData ? vertexData : cellData);
+    }
+
+    if (!m_bnData.faceIndices) {
+      m_bnData.faceIndices
+        = bnDataCreate(context, slot, BN_INT32,
+                       m_params.faceIndex->size(), faceIndex);
+    } else {
+      bnDataSet(m_bnData.faceIndices, m_params.faceIndex->size(), faceIndex);
+    }
+
+    if (!m_bnData.faceOffsets) {
+      m_bnData.faceOffsets
+        = bnDataCreate(context, slot, BN_UINT32,
+                       m_params.faceBegin->size(), faceBegin);
+    } else {
+      bnDataSet(m_bnData.faceOffsets, m_params.faceBegin->size(), faceBegin);
+    }
+
+    if (!m_bnData.cellFaces) {
+      m_bnData.cellFaces
+        = bnDataCreate(context, slot, BN_INT32,
+                       m_params.cellFace->size(), cellFace);
+    } else {
+      bnDataSet(m_bnData.cellFaces, m_params.cellFace->size(), cellFace);
+    }
+
+    if (!m_bnData.elementOffsets) {
+      m_bnData.elementOffsets
+        = bnDataCreate(context, slot, BN_UINT32,
+                       m_params.cellBegin->size(), cellBegin);
+    } else {
+      bnDataSet(m_bnData.elementOffsets, m_params.cellBegin->size(), cellBegin);
+    }
+
+    bnSetData(sf, "vertex.position", m_bnData.vertices);
+    if (vertexData) {
+      bnSetData(sf, "vertex.data", m_bnData.scalars);
+    } else {
+      bnSetData(sf, "cell.data", m_bnData.scalars);
+    }
+    bnSetData(sf, "face.index", m_bnData.faceIndices);
+    bnSetData(sf, "face.begin", m_bnData.faceOffsets);
+    bnSetData(sf, "cell.face", m_bnData.cellFaces);
+    bnSetData(sf, "cell.begin", m_bnData.elementOffsets);
+    bnSet1i(sf, "flipOrientation", m_flipOrientation ? 1 : 0);
+    bnCommit(sf);
+  }
+
   BNScalarField UnstructuredField::createBarneyScalarField() const
   {
     int slot = deviceState()->slot;
     auto context = deviceState()->tether->context;
 
-    BNScalarField sf = bnScalarFieldCreate(context, slot, "unstructured");
+    BNScalarField sf = bnScalarFieldCreate(context, slot,
+                                           m_isNFace ? "nface" : "unstructured");
     return sf;
   }
 
@@ -464,8 +647,13 @@ namespace barney_device {
 
   bool UnstructuredField::isValid() const
   {
-    return m_params.vertexPosition && m_params.index && m_params.cellBegin
-      && m_params.cellType && (m_params.vertexData || m_params.cellData);
+    const bool haveVTKStyle
+      = m_params.index && m_params.cellType;
+    const bool haveNFaceStyle
+      = m_params.faceIndex && m_params.faceBegin && m_params.cellFace;
+    return m_params.vertexPosition && m_params.cellBegin
+      && (haveVTKStyle || haveNFaceStyle)
+      && (m_params.vertexData || m_params.cellData);
   }
 
   // BlockStructuredField //

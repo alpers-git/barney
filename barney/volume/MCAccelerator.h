@@ -37,16 +37,20 @@ namespace BARNEY_NS {
   float isoLocalStep(const SamplerDD &, vec3f, float fallback) { return fallback; }
 
   /*! Customization point for the adaptive iso crossing march: return the
-      reconstructed value at P and, via cs, the finest local cell size within the
-      look-ahead box [P,Pahead]. That lets the march take big steps in coarse
-      regions and stay dense in fine ones without ever stepping past a finer
-      block. The default (samplers that don't specialise) samples at P and reports
-      cs=0, so the march falls back to a fixed reference step (its old behaviour).
-      ADL finds a sampler-specific overload in that sampler's own header. */
+      reconstructed value at P plus, via cs, the local cell size *at P* and, via
+      stepLimit, how far the ray may advance from P before the resolution could
+      get finer (scanning the segment of length lookW along dir). That lets the
+      march run at each region's own rate instead of at the finest rate found
+      anywhere ahead of it, while still never stepping over a finer block. The
+      default (samplers that don't specialise) samples at P and reports cs=0 and
+      stepLimit=0, so the march falls back to a fixed reference step (its old
+      behaviour). ADL finds a sampler-specific overload in that sampler's own
+      header. */
   template<typename SamplerDD>
   inline __rtc_device
-  float isoSampleLookahead(const SamplerDD &s, vec3f P, vec3f /*Pahead*/, float &cs)
-  { cs = 0.f; return s.sample(P,false); }
+  float isoMarchSample(const SamplerDD &s, vec3f P, vec3f /*dir*/, float /*lookW*/,
+                       float /*frac*/, float &cs, float &stepLimit)
+  { cs = 0.f; stepLimit = 0.f; return s.sample(P,false); }
 #endif
 
   template<typename SFSampler>
@@ -157,10 +161,12 @@ namespace BARNEY_NS {
   template<typename SFSampler>
   void MCVolumeAccel<SFSampler>::build(bool full_rebuild) 
   {
-    if (!majorantsGrid) {
-      auto mcGrid = volume->sf->getMCs();
+    // unconditionally, so a field whose scalars changed since the last
+    // build gets its macrocell ranges re-rasterized before the majorants
+    // are derived from them
+    auto mcGrid = volume->sf->getMCs();
+    if (!majorantsGrid)
       majorantsGrid = std::make_shared<MajorantsGrid>(mcGrid);
-    }
     majorantsGrid->computeMajorants(&volume->xf);
     sfSampler->build();
     
@@ -455,32 +461,38 @@ namespace BARNEY_NS {
                 };
                   
 
-                // Adaptive crossing march: step stepFrac of the finest local cell,
-                // never past the look-ahead box just queried (stepW <= lookW), so a
-                // finer block shrinks the step before its crossing can be skipped.
-                // Same tent value as sample() -> identical surface; coarse steps big.
-                const float stepFrac   = 0.5f;                  // samples/cell = 1/stepFrac
-                const float minStepT   = (_t1 - _t0) * (1.f/256.f);
-                const float minLookW   = minStepT * dirLen;
-                float lookW = reduce_min(mcGridSpacing);
+                // Adaptive crossing march: step stepFrac of the cell size *at the
+                // current point*, capped by the sampler's step limit so a finer
+                // block ahead is entered rather than skipped, and never past the
+                // segment that limit was computed over (stepW <= lookW). Sizing the
+                // look-ahead from the local cell too is what keeps coarse regions
+                // cheap: the old rule took the finest cell anywhere in a fixed-width
+                // box, so one fine block pinned the whole macro cell to fine steps.
+                // Same tent value as sample() -> identical surface.
+                const float stepFrac = 0.5f;                  // samples/cell = 1/stepFrac
+                const float minStepT = (_t1 - _t0) * (1.f/256.f);
+                const float minLookW = minStepT * dirLen;
+                const vec3f uDir     = obj_dir * (1.f/dirLen);
                 float tCur  = _t0;
                 float cs    = 0.f;
-                ff1 = isoSampleLookahead(self.isoSurface.sfSampler,
-                                         marchOrg + tCur*obj_dir,
-                                         marchOrg + min(tCur+lookW/dirLen,_t1)*obj_dir,
-                                         cs);
+                float limit = 0.f;
+                float lookW = max(stepFrac*2.f*refStep, minLookW);
+                ff1 = isoMarchSample(self.isoSurface.sfSampler,
+                                     marchOrg + tCur*obj_dir,
+                                     uDir,lookW,stepFrac,cs,limit);
                 int guard = 0;
                 while (tCur < _t1 && guard++ < 512) {
                   const float csEff    = (cs > 0.f) ? cs : 2.f*refStep;
-                  const float stepW    = min(stepFrac*csEff, lookW);
-                  const float nextLook = max(max(stepFrac*csEff, stepW), minLookW);
+                  const float stepW    = min(limit > 0.f ? limit : stepFrac*csEff,
+                                             lookW);
                   const float tNext    = min(tCur + max(stepW/dirLen, minStepT), _t1);
+                  const float nextLook = min(max(stepFrac*csEff, minLookW),
+                                             max((_t1 - tNext)*dirLen, minLookW));
                   ff0 = ff1;
-                  float csNext = 0.f;
-                  ff1 = isoSampleLookahead(self.isoSurface.sfSampler,
-                                           marchOrg + tNext*obj_dir,
-                                           marchOrg + min(tNext+nextLook/dirLen,_t1)*obj_dir,
-                                           csNext);
+                  float csNext = 0.f, limitNext = 0.f;
+                  ff1 = isoMarchSample(self.isoSurface.sfSampler,
+                                       marchOrg + tNext*obj_dir,
+                                       uDir,nextLook,stepFrac,csNext,limitNext);
                   if (!isnan(ff0) && !isnan(ff1)) {
                     valueRange.lower = min(ff0,ff1);
                     valueRange.upper = max(ff0,ff1);
@@ -493,6 +505,7 @@ namespace BARNEY_NS {
                   }
                   tCur  = tNext;
                   cs    = csNext;
+                  limit = limitNext;
                   lookW = nextLook;
                 }
 

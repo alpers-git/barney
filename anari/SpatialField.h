@@ -63,6 +63,11 @@ namespace barney_device {
     bool isValid() const override;
 
   private:
+    /*! upload path for shared-face polyhedral ("NFACE", CGNS
+        NGON_n/NFACE_n style) meshes; called from finalize() when the
+        face arrays are present */
+    void finalizeNFace();
+
     struct Parameters
     {
       Parameters(helium::BaseObject *observer)
@@ -71,7 +76,10 @@ namespace barney_device {
           cellData(observer),
           index(observer),
           cellType(observer),
-          cellBegin(observer)
+          cellBegin(observer),
+          faceIndex(observer),
+          faceBegin(observer),
+          cellFace(observer)
       {}
       helium::ChangeObserverPtr<helium::Array1D> vertexPosition;
       helium::ChangeObserverPtr<helium::Array1D> vertexData;
@@ -79,6 +87,16 @@ namespace barney_device {
       helium::ChangeObserverPtr<helium::Array1D> index;
       helium::ChangeObserverPtr<helium::Array1D> cellType;
       helium::ChangeObserverPtr<helium::Array1D> cellBegin;
+      /*! @{ shared-face polyhedral ("NFACE") arrays: 'face.index' is
+          a flat pool of 0-based vertex indices, 'face.begin' its
+          numFaces+1 offsets array; 'cell.face' is a flat pool of
+          signed 1-based face IDs (CGNS convention: positive = face
+          normal points out of the cell), 'cell.begin' its numCells+1
+          offsets array */
+      helium::ChangeObserverPtr<helium::Array1D> faceIndex;
+      helium::ChangeObserverPtr<helium::Array1D> faceBegin;
+      helium::ChangeObserverPtr<helium::Array1D> cellFace;
+      /*! @} */
     } m_params;
 
     struct BarneyData
@@ -88,7 +106,13 @@ namespace barney_device {
       BNData indices{nullptr};
       BNData cellType{nullptr};
       BNData elementOffsets{nullptr};
+      BNData faceIndices{nullptr};
+      BNData faceOffsets{nullptr};
+      BNData cellFaces{nullptr};
     } m_bnData;
+
+    bool m_flipOrientation{false};
+    bool m_isNFace{false};
 
     box3 m_bounds;
   };

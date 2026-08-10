@@ -204,6 +204,8 @@ if (BARNEY_BACKEND_OPTIX)
   target_compile_definitions(barney_rtc_optix
     PUBLIC -DBARNEY_RTC_OPTIX=1)
   rtc_library_properties(barney_rtc_optix)
+  target_include_directories(barney_rtc_optix BEFORE PRIVATE
+    ${OptiX_ROOT_DIR}/include)
   if (BARNEY_DISABLE_DENOISING)
     target_compile_definitions(barney_rtc_optix
       PUBLIC -DOPTIX_DISABLE_DENOISING=1)
@@ -211,7 +213,7 @@ if (BARNEY_BACKEND_OPTIX)
 else()
   # dummy "no-op" library; empty, but it exists, so code below can
   # just link to it without having to do any checking
-  add_library(barney_rtc_optix INTERFACE) 
+  add_library(barney_rtc_optix INTERFACE)
 endif()
 
 # ==================================================================

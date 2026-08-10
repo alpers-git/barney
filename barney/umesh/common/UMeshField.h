@@ -12,6 +12,8 @@
 
 namespace BARNEY_NS {
 
+  struct UMeshCuBQLSampler;
+
   enum {
     _ANARI_TET = 0,
     _ANARI_HEX = 1,
@@ -103,6 +105,9 @@ namespace BARNEY_NS {
       ranges, but not yet the majorants) over a umesh */
     void buildInitialMacroCells(MCGrid &grid);
 
+    /*! re-rasterize an existing grid's cell ranges after a scalar swap */
+    void refillMCs(MCGrid &grid) override;
+
     /*! computes, on specified device, the bounding boxes and - if
       d_primRanges is non-null - the primitmives ranges. d_primBounds
       and d_primRanges (if non-null) must be pre-allocated and
@@ -124,6 +129,9 @@ namespace BARNEY_NS {
 
     /*! create, fill, and return a macrocell grid for this field */
     MCGrid::SP buildMCs() override;
+
+    /*! the shared sampler for this field, created on first use */
+    std::shared_ptr<UMeshCuBQLSampler> getSampler();
 
     VolumeAccel::SP createAccel(Volume *volume) override;
     

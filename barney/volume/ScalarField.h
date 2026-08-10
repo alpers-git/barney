@@ -16,6 +16,7 @@ namespace BARNEY_NS {
   struct IsoSurface;
   struct IsoSurfaceAccel;
   struct ModelSlot;
+  struct ScalarFieldSampler;
 
   /*! abstracts any sort of scalar field (unstructured, amr,
     structured, rbfs....) _before_ any transfer function(s) get
@@ -51,12 +52,45 @@ namespace BARNEY_NS {
     { return {}; }
 
     MCGrid::SP getMCs()
-    { if (!mcGrid) mcGrid = buildMCs(); return mcGrid; }
+    {
+      if (!mcGrid)
+        mcGrid = buildMCs();
+      else if (!mcGridValid)
+        refillMCs(*mcGrid);
+      mcGridValid = true;
+      return mcGrid;
+    }
 
     /*! create, fill, and return a macrocell grid for this field */
     virtual MCGrid::SP buildMCs();
 
+    /*! re-rasterize the per-macrocell scalar ranges of an already sized
+        grid, after this field's scalars changed but its geometry did
+        not. The grid keeps its identity - a MajorantsGrid built over it
+        holds it by pointer - and only its cell ranges are recomputed.
+        Field types that don't override this keep the ranges they had. */
+    virtual void refillMCs(MCGrid &) {}
+
+    /*! tell the next getMCs() that the cached macrocell ranges describe
+        stale scalars. Called from commit(), since the ranges drive both
+        the volume majorants and the iso-surface's per-macrocell
+        rejection test: a grid left over from a previously set scalar
+        renders the new one wrong (and, because the majorants still
+        bound the old data, often looks like nothing changed at all). */
+    void invalidateMCs() { mcGridValid = false; }
+
     MCGrid::SP  mcGrid;
+    bool        mcGridValid = false;
+
+    /*! the one sampler every accel over this field shares. A sampler owns a
+        cuBQL bvh over the field's elements, which for a large mesh is the
+        biggest derived structure there is; giving the volume accel and the
+        iso-surface accel one each would build and hold two of them, and
+        switching between the two presentations would transiently need both.
+        The bvh is built from element bounds only, so it survives a scalar
+        swap and one instance serves every accel. Created on first use by the
+        concrete field's getSampler(). */
+    std::shared_ptr<ScalarFieldSampler> sampler;
     box3f       worldBounds;
     
     /*! a clipping box used to restrict whatever primitives the volume

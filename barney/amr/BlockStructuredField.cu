@@ -109,6 +109,18 @@ namespace BARNEY_NS {
     grid.gridOrigin = worldBounds.lower;
     grid.gridSpacing = worldBounds.size() * rcp(vec3f(dims));
     
+    refillMCs(grid);
+
+    return mcGrid;
+  }
+
+  /*! the grid's extent comes from the block layout, which a scalar swap
+    does not touch, so only the per-cell ranges have to be re-rasterized */
+  void BlockStructuredField::refillMCs(MCGrid &grid)
+  {
+    if (!grid.built())
+      return;
+
     grid.clearCells();
 
     for (auto device : *devices) {
@@ -117,11 +129,9 @@ namespace BARNEY_NS {
                    dru(numBlocks,1024),1024,
                    this->getDD(device),grid.getDD(device));
     }
-    
-    for (auto device : *devices) 
+
+    for (auto device : *devices)
       device->sync();
-    
-    return mcGrid;
   }
   
 
@@ -159,24 +169,30 @@ namespace BARNEY_NS {
     return dd;
   }
 
+  /*! one sampler, and therefore one element bvh, for every accel over
+    this field: the volume and iso-surface presentations share it, so
+    switching between them neither rebuilds nor duplicates it */
+  std::shared_ptr<BlockStructuredCuBQLSampler> BlockStructuredField::getSampler()
+  {
+    if (!sampler)
+      sampler = std::make_shared<BlockStructuredCuBQLSampler>(this);
+    return std::static_pointer_cast<BlockStructuredCuBQLSampler>(sampler);
+  }
+
   VolumeAccel::SP BlockStructuredField::createAccel(Volume *volume)
   {
-    auto sampler
-      = std::make_shared<BlockStructuredCuBQLSampler>(this);
     return std::make_shared<MCVolumeAccel<BlockStructuredCuBQLSampler>>
       (volume,
        createGeomType_BlockStructuredMC,
-       sampler);
+       getSampler());
   }
 
   IsoSurfaceAccel::SP BlockStructuredField::createIsoAccel(IsoSurface *isoSurface)
   {
-    auto sampler
-      = std::make_shared<BlockStructuredCuBQLSampler>(this);
     return std::make_shared<MCIsoSurfaceAccel<BlockStructuredCuBQLSampler>>
       (isoSurface,
        createGeomType_BlockStructuredMC_Iso,
-       sampler);
+       getSampler());
   }
 
   __rtc_global
@@ -282,6 +298,11 @@ namespace BARNEY_NS {
 
     numBlocks = (int)perBlock.origins->count;
     assert(numBlocks > 0);
+
+    /* the scalars may have been re-pointed at a different field since
+       the last commit; the cached macrocell ranges describe the old one */
+    invalidateMCs();
+
     assert(perBlock.dims->count == numBlocks);
     assert(perBlock.offsets->count == numBlocks);
     assert(perBlock.levels->count == numBlocks);

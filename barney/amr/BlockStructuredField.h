@@ -13,6 +13,8 @@
 
 namespace BARNEY_NS {
 
+  struct BlockStructuredCuBQLSampler;
+
   struct Block;
 
   /*! accumulator for the analytic basis-function gradient (ExaBricks, Wald et
@@ -90,7 +92,10 @@ namespace BARNEY_NS {
     // ------------------------------------------------------------------
     
     MCGrid::SP buildMCs() override;
-    
+
+    /*! re-rasterize an existing grid's cell ranges after a scalar swap */
+    void refillMCs(MCGrid &grid) override;
+
     /*! computes, on specified device, the array of bounding box and
         value ranges for cubql bvh consturction; one box and one value
         range per each block */
@@ -98,6 +103,9 @@ namespace BARNEY_NS {
                            box3f *d_primBounds,
                            range1f *d_primRanges);
     
+    /*! the shared sampler for this field, created on first use */
+    std::shared_ptr<BlockStructuredCuBQLSampler> getSampler();
+
     VolumeAccel::SP createAccel(Volume *volume) override;
 
     /*! creates a macro-cell accelerated iso-surface accel for this AMR

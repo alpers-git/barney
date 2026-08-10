@@ -43,10 +43,13 @@ namespace BARNEY_NS {
           per-cell `active` mask, which is what previously caused boundary bands. */
       inline __rtc_device float sample(vec3f P, bool dbg = false) const;
       /*! value at P (identical to sample()) AND, in the SAME single bvh query, the
-          finest cell size among blocks overlapping the box [P,Pahead]; used by the
-          adaptive iso crossing march for a safe look-ahead step. cellSize=0 if
-          nothing overlaps the box (coverage gap / empty). */
-      inline __rtc_device float sampleAndLookaheadCellSize(vec3f P, vec3f Pahead, float &cellSize) const;
+          two quantities the adaptive iso crossing march needs: the cell size of
+          the finest block *covering* P, and how far the ray may advance before it
+          could enter a finer block. cellSize=0 in a coverage gap, stepLimit=0 if
+          no block overlaps the look-ahead segment. */
+      inline __rtc_device float sampleAndMarchStep(vec3f P, vec3f dir, float lookW,
+                                                   float frac, float &cellSize,
+                                                   float &stepLimit) const;
       /*! reconstructs the value at P *and* its analytic object-space gradient
           (ExaBricks eq. 3) in the same single bvh query - used for iso shading
           normals in place of a 7-tap central difference. Returns NAN (grad 0)
@@ -146,26 +149,64 @@ namespace BARNEY_NS {
   }
 
   /*! sample(P) (byte-for-byte: addBasisFunctions self-filters to blocks containing P)
-      plus, free in the same bvh traversal, the finest cell size over blocks in
-      [P,Pahead] - the adaptive march's look-ahead. */
+      plus, free in the same bvh traversal, the two step controls for the adaptive
+      march.
+
+      cellSize is the resolution *at P*: the finest block covering P. Taking it
+      from the block the ray is actually in - rather than from the finest block
+      anywhere in the look-ahead box - is what lets a coarse region be marched at
+      its own rate even when fine blocks sit further along the segment.
+
+      stepLimit keeps that safe. It is min over blocks b overlapping the segment
+      of (ray entry distance into b) + frac*cellSize(b). The block covering P has
+      entry distance 0, so the limit is at most frac*cellSize; a finer block ahead
+      caps the step at its entry plus one fractional cell of its own, so the ray
+      lands just inside it and is re-sampled at that block's rate. A block can
+      therefore never be stepped over, including one nested inside the coarse
+      block that covers P. */
   inline __rtc_device
-  float BlockStructuredCuBQLSampler::DD::sampleAndLookaheadCellSize(vec3f P,
-                                                                    vec3f Pahead,
-                                                                    float &cellSize) const
+  float BlockStructuredCuBQLSampler::DD::sampleAndMarchStep(vec3f P,
+                                                            vec3f dir,
+                                                            float lookW,
+                                                            float frac,
+                                                            float &cellSize,
+                                                            float &stepLimit) const
   {
-    float sumWeights = 0.f, sumWeightedValues = 0.f, best = 0.f;
+    float sumWeights = 0.f, sumWeightedValues = 0.f;
+    float atP = 0.f, limit = 1e30f;
+    auto slab = [](float o, float d, float lo, float hi, float &tIn, float &tOut) {
+      if (fabsf(d) < 1e-20f) {
+        if (o < lo || o > hi) tIn = 1e30f;
+        return;
+      }
+      const float ta = (lo - o) / d, tb = (hi - o) / d;
+      tIn  = max(tIn ,min(ta,tb));
+      tOut = min(tOut,max(ta,tb));
+    };
     auto lambda = [&](const uint32_t primID) -> int {
       addBasisFunctions(sumWeightedValues,sumWeights,primID,P);
-      const float cs = Block::getFrom(*this,primID).cellSize;
-      if (best == 0.f || cs < best) best = cs;
+      const auto block = Block::getFrom(*this,primID);
+      const float cs = block.cellSize;
+      const vec3f blo = vec3f(block.origin) * cs;
+      const vec3f bhi = vec3f(block.origin + block.dims) * cs;
+      float tIn = 0.f, tOut = lookW;
+      slab(P.x,dir.x,blo.x,bhi.x,tIn,tOut);
+      slab(P.y,dir.y,blo.y,bhi.y,tIn,tOut);
+      slab(P.z,dir.z,blo.z,bhi.z,tIn,tOut);
+      if (tIn <= tOut) {
+        if (tIn <= 0.f && (atP == 0.f || cs < atP)) atP = cs;
+        limit = min(limit,tIn + frac*cs);
+      }
       return CUBQL_CONTINUE_TRAVERSAL;
     };
+    const vec3f Pahead = P + lookW*dir;
     const vec3f lo = min(P,Pahead), hi = max(P,Pahead);
     cuBQL::box3f box;
     box.lower = (const cuBQL::vec3f &)lo;
     box.upper = (const cuBQL::vec3f &)hi;
     cuBQL::fixedBoxQuery::forEachPrim(lambda,bvh,box);
-    cellSize = best;
+    cellSize  = atP;
+    stepLimit = limit < 1e29f ? limit : 0.f;
     return sumWeights == 0.f ? NAN : (sumWeightedValues / sumWeights);
   }
 
@@ -226,11 +267,12 @@ namespace BARNEY_NS {
     return cs > 0.f ? .5f*cs : fallback;
   }
 
-  /*! ADL hook for the adaptive iso march: value at P + finest cell in the look-ahead box. */
+  /*! ADL hook for the adaptive iso march: value at P + local cell size + step limit. */
   inline __rtc_device
-  float isoSampleLookahead(const BlockStructuredCuBQLSampler::DD &s,
-                           vec3f P, vec3f Pahead, float &cs)
-  { return s.sampleAndLookaheadCellSize(P,Pahead,cs); }
+  float isoMarchSample(const BlockStructuredCuBQLSampler::DD &s,
+                       vec3f P, vec3f dir, float lookW, float frac,
+                       float &cs, float &stepLimit)
+  { return s.sampleAndMarchStep(P,dir,lookW,frac,cs,stepLimit); }
 
   inline __rtc_device
   AMRLeaf BlockStructuredCuBQLSampler::DD::cellAt(vec3f q) const
