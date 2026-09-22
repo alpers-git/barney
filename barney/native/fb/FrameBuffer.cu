@@ -61,7 +61,12 @@ namespace BARNEY_NS {
         return true;
       }
       if (member == "denoise") {
-        enableDenoising = value;
+        /* BARNEY_CONFIG=denoise=0 is an explicit user override, so it has to
+           win over whatever the app sets here. Apps commonly set this
+           parameter unconditionally on every frame commit, which would
+           otherwise silently undo the disable we did in the constructor. */
+        if (!FromEnv::explicitlyDisabled("denoise"))
+          enableDenoising = value;
         return true;
       }
       if (member == "fadeOutDenoiser") {
