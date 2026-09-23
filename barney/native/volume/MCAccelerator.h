@@ -380,15 +380,28 @@ namespace BARNEY_NS {
                                   ti.getGeometryIndex(),
                                   ti.getPrimitiveIndex()));
     
-      float tHit = ray.tMax;
-      dda3(dda_org,dda_dir,tRange.upper,
+      // bound against the traversal's range; ray.tMax is stale until closest-hit runs
+      const float tMinValid = tRange.lower;
+      const float tMaxValid = tRange.upper;
+
+      // self-intersection epsilon: shadeRays.cu's ~1e-3 offset is far below our surface error
+      enum { numSteps = 10 };
+      // cell diagonal, not shortest edge: a diagonal ray's sub-step is the longest
+      const float objEps
+        = .5f * length(mcGridSpacing) / float(numSteps);
+      const float tFirstValid
+        = tMinValid + objEps / max(1e-20f,length(obj_dir));
+
+      float tHit = tMaxValid;
+      dda3(dda_org,dda_dir,tMaxValid,
            vec3ui(self.mcGrid.dims),
            [&](const vec3i &cellIdx, float t0, float t1) -> bool
            {
-             float _t0 = t0;
-             float _t1 = t1;
-             range1f tRange = range1f {t0,min(t1,ray.tMax)};
-             if (tRange.lower >= tRange.upper) return true;
+             // dda3 only honours tmax, so clamp the cell span ourselves
+             float _t0 = max(t0,tFirstValid);
+             float _t1 = min(t1,tMaxValid);
+             if (_t0 >= _t1) return true;
+             range1f tRange = range1f {_t0,_t1};
                 
              range1f valueRange = self.mcGrid.scalarRange(cellIdx);
                 
@@ -414,20 +427,18 @@ namespace BARNEY_NS {
 
              auto intersect = [&](float isoValue)
              {
-               float t = (isoValue - ff0) / (ff1-ff0);
-               t = lerp_l(t,tRange.lower,tRange.upper);
-#if 1
-               tHit = tRange.lower;
-#else
-               tHit = min(tHit,t);
-#endif
+               // use the crossing, not tRange.lower: that quantised the surface per ray direction
+               const float dF = ff1 - ff0;
+               // dF==0: segment sits on the iso value, and this guards the divide
+               float f = (dF == 0.f) ? 0.f : (isoValue - ff0) / dF;
+               f = max(0.f,min(1.f,f));
+               tHit = min(tHit,lerp_l(f,tRange.lower,tRange.upper));
              };
                   
              if (dbg) printf("found mc cell that overlaps range...\n");
-             float tt1 = t0;
+             float tt1 = _t0;
              vec3f P = obj_org + tt1 * obj_dir;
              ff1 = self.isoSurface.sfSampler.sample(P,dbg);
-             int numSteps = 10;
 
              if (dbg) printf("value at entry t=%f, d=%f\n",
                              tt1,ff1);
@@ -455,7 +466,7 @@ namespace BARNEY_NS {
                         valueRange.upper);
                if (overlaps(self.isoSurface.isoValue)) {
                  intersect(self.isoSurface.isoValue);
-                 if (tHit < ray.tMax) {
+                 if (tHit < tMaxValid) {
                    return false;
                  }
                }
@@ -465,7 +476,7 @@ namespace BARNEY_NS {
            },
            /*NO debug:*/false
            );
-      if (tHit >= ray.tMax) return;
+      if (tHit < tFirstValid || tHit >= tMaxValid) return;
     
       // ------------------------------------------------------------------
       // get texture coordinates
@@ -548,9 +559,10 @@ namespace BARNEY_NS {
           return;
         }
       }
-      material.setHit(ray,hitData,world.samplers,dbg);
-      
+      // commit before shading: setHit() writes the PRD, which is what decides occlusion
       ti.reportIntersection(tHit, 0);
+
+      material.setHit(ray,hitData,world.samplers,dbg);
 
       // Write hit IDs for AOV channels
       const OptixGlobals &globals = OptixGlobals::get(ti);

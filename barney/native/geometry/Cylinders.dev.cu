@@ -175,11 +175,12 @@ namespace BARNEY_NS {
         if (t0 > t1) return;
 
         vec3f objectN = 0.f;
+        // candidate distance stays local; writing ray.tMax corrupted the volume's march bound
         if (ray_tmin <= t0 && t0 <= ray_tmax) {
           // front side hit:
-          ray.tMax = t0;
+          hit_t = t0;
           td *= -1.f;
-          float hit_surf_u = (ray.tMax * sd - sf) * 1.f/(s2);
+          float hit_surf_u = (hit_t * sd - sf) * 1.f/(s2);
           if (t0 == cap_t0) {
             objectN
               = (cap_t0 == cap_t_v0)
@@ -189,8 +190,8 @@ namespace BARNEY_NS {
             objectN = (td * d - fp - hit_surf_u * s);          
           }
         } else if (ray_tmin <= t1 && t1 <= ray_tmax) {
-          ray.tMax = t1;
-          float hit_surf_u = (ray.tMax * sd - sf) * 1.f/(s2);
+          hit_t = t1;
+          float hit_surf_u = (hit_t * sd - sf) * 1.f/(s2);
           if (t0 == cap_t1) {
             objectN
               = (cap_t0 == cap_t_v0)
@@ -202,8 +203,8 @@ namespace BARNEY_NS {
         } else
           return;
 
-        vec3f objectP = ray_org + ray.tMax * ray_dir;
-        float t_hit = ray.tMax;
+        vec3f objectP = ray_org + hit_t * ray_dir;
+        float t_hit = hit_t;
         objectP = objectP + 1e-4f * normalize(objectN);
 
         float lerp_t
@@ -238,6 +239,13 @@ namespace BARNEY_NS {
 
         self.setHitAttributes(hitData,interpolator,world,ray.dbg());
 
+        // Cut-plane: reject hits on the invisible side
+        if (OptixGlobals::hitOnInvisibleSide(globals, hit_t, ti))
+          return;
+
+        // commit before shading: with no closest-hit prog, the setHit() below is the hit
+        ti.reportIntersection(hit_t, 0);
+
         const DeviceMaterial &material
           = world.materials[self.materialID];
         material.setHit(ray,hitData,world.samplers,ray.dbg());
@@ -253,12 +261,6 @@ namespace BARNEY_NS {
             : instID;
           globals.hitIDs[rayID].objID  = self.userID;
         }
-    
-        // Cut-plane: reject hits on the invisible side
-        if (OptixGlobals::hitOnInvisibleSide(globals, ray.tMax, ti))
-          return;
-
-        ti.reportIntersection(ray.tMax, 0);
       }
 #endif
     };

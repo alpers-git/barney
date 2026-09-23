@@ -56,20 +56,26 @@ namespace BARNEY_NS {
       
         float t_hit = ti.getRayTmax(); 
 
-        vec3f org = ti.getWorldRayOrigin(); 
+        vec3f org = ti.getWorldRayOrigin();
         vec3f dir = ti.getWorldRayDirection();
-        /*! isec code has temporarily stored object-space hit position
-          in ray.P, see below! */
-        vec3f objectP = ray.P;
-        vec3f worldP = ti.transformPointFromObjectToWorldSpace(objectP);
-      
+
         vec3f objectCenter
           = self.origins[primID];
+        float objectRadius = self.radii?self.radii[primID]:self.defaultRadius;
+
+        // recompute rather than read ray.P: any isec-shading geom overwrites it mid-traversal
+        // (getObjectRay*() is illegal in closesthit, so rebuild it from the world ray)
+        const vec3f objOrg = ti.transformPointFromWorldToObjectSpace(org);
+        const vec3f objDir = ti.transformVectorFromWorldToObjectSpace(dir);
+        const float t_move
+          = max(0.f,length(objectCenter-objOrg)-3.f*objectRadius);
+        vec3f objectP = (objOrg + t_move*objDir) + (t_hit - t_move)*objDir;
+
+        vec3f worldP = ti.transformPointFromObjectToWorldSpace(objectP);
         vec3f objectN
           = (objectP == objectCenter)
           ? vec3f(1.f,0.f,0.f)
           : (objectP - objectCenter);
-        float objectRadius = self.radii?self.radii[primID]:self.defaultRadius;
 
         /* shift object-space hit a bit away from the sphere */
         float eps = 1e-6f;
@@ -160,10 +166,7 @@ namespace BARNEY_NS {
 
       
         if (hit_t < t_max) {
-          // "abuse" ray.P to store local sphere coordinate
-          vec3f osPositionOfHit = /*shifted!*/org + /*shifted!*/hit_t*dir;
-          ray.P = osPositionOfHit;
-      
+          // no longer stashes the hit in ray.P; closestHit() recomputes it
           hit_t += t_move;
 
           // Cut-plane: reject hits on the invisible side
