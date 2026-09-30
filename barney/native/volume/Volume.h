@@ -140,6 +140,9 @@ namespace BARNEY_NS {
       float anisotropy = 0.6f;
       float scatteringAlbedo = 0.9f;
       bool needsMajorantRebuild = false;
+      /*! the scalar field's MCGrid::contentEpoch the majorants were last built
+          for; -1 means never */
+      int  seenMCEpoch = -1;
       DevGroup::SP const devices;
       int userID = 0;
     

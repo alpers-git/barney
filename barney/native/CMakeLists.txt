@@ -67,6 +67,12 @@ set(HOST_SOURCES
  
   amr/BlockStructuredCuBQLSampler.cu
   amr/BlockStructuredField.cu
+
+  # *particle RBF* volumes (signed radial basis function fields)
+  volume/ParticleRBFField.h
+  volume/ParticleRBFField.cu
+  volume/ParticleRBFSampler.h
+  volume/ParticleRBFSampler.cu
   
   # *structured* volumes
   volume/StructuredData.h
@@ -185,6 +191,7 @@ set(DEVICE_PROGRAM_SOURCES
   volume/NanoVDB.dev.cu
   umesh/mc/UMeshMC.dev.cu
   amr/BlockStructuredMC.dev.cu
+  volume/ParticleRBFMC.dev.cu
   kernels/traceRays.dev.cu
 )
 

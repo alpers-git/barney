@@ -27,6 +27,14 @@ namespace BARNEY_NS {
     {
       if (!accel)
         return;
+      /* the field can move its own cell ranges without the transfer function
+         changing - any filter that alters what the field evaluates to does
+         that - and majorants derived from the old ranges are then wrong, and
+         wrong in the direction that loses parts of the volume */
+      if (sf->mcGrid && sf->mcGrid->contentEpoch != seenMCEpoch) {
+        needsMajorantRebuild = true;
+        seenMCEpoch = sf->mcGrid->contentEpoch;
+      }
       if (needsMajorantRebuild && sf->mcGrid && sf->mcGrid->built()) {
         accel->rebuildMajorantsOnly();
         needsMajorantRebuild = false;

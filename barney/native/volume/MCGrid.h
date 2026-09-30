@@ -31,6 +31,15 @@ namespace BARNEY_NS {
       majorants. */
     struct MCGrid {
       typedef std::shared_ptr<MCGrid> SP;
+
+      /*! bumped every time the cell ranges are recomputed. A volume's majorants
+          are derived from these, so anything holding derived data has to be
+          able to tell that they moved - a field whose ranges depend on a filter
+          (an orbital-channel selection, say) changes them without the transfer
+          function changing, and a majorant left over from the previous ranges
+          is silently too small, which makes woodcock tracking miss extinction
+          and drops parts of the volume. */
+      int contentEpoch = 0;
     
       /*! device data for this class - grid of per-cell ranges, grid of
         majorants, and dimensionality of grid */

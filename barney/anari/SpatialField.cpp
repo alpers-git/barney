@@ -41,6 +41,8 @@ namespace BARNEY_NS {
         return new NanoVDBSpatialField(s);
       else if (subtype == "blockStructured")
         return new BlockStructuredField(s);
+      else if (subtype == "particleRBF")
+        return new ParticleRBFField(s);
       else if (subtype == "structuredRegular")
         return new StructuredRegularField(s);
       else {
@@ -621,6 +623,272 @@ namespace BARNEY_NS {
     }
 
     box3 BlockStructuredField::bounds() const
+    {
+      return m_bounds;
+    }
+
+    // ParticleRBFField //
+
+    ParticleRBFField::ParticleRBFField(BarneyGlobalState *s)
+      : SpatialField(s), m_params(this)
+    {}
+
+    ParticleRBFField::~ParticleRBFField()
+    {
+      if (m_bnData.position)     bnRelease(m_bnData.position);
+      if (m_bnData.coefficient)  bnRelease(m_bnData.coefficient);
+      if (m_bnData.exponent)     bnRelease(m_bnData.exponent);
+      if (m_bnData.cutoff)       bnRelease(m_bnData.cutoff);
+      if (m_bnData.monomial)     bnRelease(m_bnData.monomial);
+      if (m_bnData.group)        bnRelease(m_bnData.group);
+      if (m_bnData.groupValue)   bnRelease(m_bnData.groupValue);
+      if (m_bnData.groupEnabled) bnRelease(m_bnData.groupEnabled);
+      if (m_bnData.polyOffset)   bnRelease(m_bnData.polyOffset);
+      if (m_bnData.polyCoeff)    bnRelease(m_bnData.polyCoeff);
+      if (m_bnData.polyMonomial) bnRelease(m_bnData.polyMonomial);
+      if (m_bnData.groupDirection) bnRelease(m_bnData.groupDirection);
+    }
+
+    void ParticleRBFField::commitParameters()
+    {
+      Object::commitParameters();
+      m_params.position     = getParamObject<helium::Array1D>("particle.position");
+      m_params.coefficient  = getParamObject<helium::Array1D>("particle.coefficient");
+      m_params.exponent     = getParamObject<helium::Array1D>("particle.exponent");
+      m_params.cutoff       = getParamObject<helium::Array1D>("particle.cutoff");
+      m_params.monomial     = getParamObject<helium::Array1D>("particle.monomial");
+      m_params.group        = getParamObject<helium::Array1D>("particle.group");
+      m_params.groupValue   = getParamObject<helium::Array1D>("group.value");
+      m_params.groupEnabled = getParamObject<helium::Array1D>("group.enabled");
+      m_params.polyOffset   = getParamObject<helium::Array1D>("particle.polyOffset");
+      m_params.polyCoeff    = getParamObject<helium::Array1D>("particle.polyCoeff");
+      m_params.polyMonomial = getParamObject<helium::Array1D>("particle.polyMonomial");
+      m_params.groupDirection = getParamObject<helium::Array1D>("group.direction");
+      m_numChannels = getParam<int>("numChannels",1);
+      m_channelMask = (unsigned)getParam<int>("channelMask",-1);
+      m_vecMode     = getParam<int>("vecMode",0);
+      m_polyMaxDegree = getParam<int>("polyMaxDegree",6);
+      m_mcSamplesPerAxis = getParam<int>("mcSamplesPerAxis",-1000);
+      m_mcRangePad       = getParam<float>("mcRangePad",-1.f);
+
+      m_cutoffThreshold = getParam<float>("cutoffThreshold",1e-4f);
+      m_mcGridSize      = getParam<int>("mcGridSize",0);
+      m_valueRange      = getParam<helium::float2>
+        ("filter.valueRange",
+         helium::float2(0.f,std::numeric_limits<float>::infinity()));
+
+      m_haveExplicitBounds = hasParam("bounds.lower") && hasParam("bounds.upper");
+      if (m_haveExplicitBounds) {
+        m_explicitBounds.lower = getParam<helium::float3>("bounds.lower",helium::float3(0.f));
+        m_explicitBounds.upper = getParam<helium::float3>("bounds.upper",helium::float3(0.f));
+      }
+    }
+
+    bool ParticleRBFField::isValid() const
+    {
+      return m_params.position && m_params.coefficient && m_params.exponent;
+    }
+
+    void ParticleRBFField::finalize()
+    {
+      if (!m_params.position) {
+        reportMessage(ANARI_SEVERITY_WARNING,
+                      "missing required parameter 'particle.position' on particleRBF spatial field");
+        return;
+      }
+      if (!m_params.coefficient) {
+        reportMessage(ANARI_SEVERITY_WARNING,
+                      "missing required parameter 'particle.coefficient' on particleRBF spatial field");
+        return;
+      }
+      if (!m_params.exponent) {
+        reportMessage(ANARI_SEVERITY_WARNING,
+                      "missing required parameter 'particle.exponent' on particleRBF spatial field");
+        return;
+      }
+
+      const size_t numParticles = m_params.position->totalSize();
+      if (m_params.coefficient->totalSize() != numParticles ||
+          m_params.exponent->totalSize() != numParticles) {
+        reportMessage(ANARI_SEVERITY_WARNING,
+                      "'particle.*' arrays on particleRBF spatial field must all "
+                      "have the same size");
+        return;
+      }
+
+      const auto *positions = m_params.position->beginAs<math::float3>();
+      const auto *exponents = m_params.exponent->beginAs<float>();
+
+      const bool primitivesChanged
+        =  !m_uploaded.done
+        || m_uploaded.position != (const void *)positions
+        || m_uploaded.count    != numParticles;
+
+      //=======================================================
+      // cutoffs: where each primitive's gaussian has decayed past the
+      // threshold. supplying them explicitly lets an app fold the
+      // contraction coefficient in, which shrinks them a lot.
+      //=======================================================
+      const float *cutoffs = nullptr;
+      if (!primitivesChanged) {
+        /* nothing about the geometry moved, so only the filter needs pushing */
+      } else if (m_params.cutoff && m_params.cutoff->totalSize() == numParticles) {
+        cutoffs = m_params.cutoff->beginAs<float>();
+      } else {
+        if (m_params.cutoff)
+          reportMessage(ANARI_SEVERITY_WARNING,
+                        "'particle.cutoff' has the wrong size; deriving cutoffs "
+                        "from 'particle.exponent' instead");
+        const float lnInvEps = -std::log(std::max(1e-30f,m_cutoffThreshold));
+        m_generatedCutoffs.resize(numParticles);
+        for (size_t i=0;i<numParticles;i++) {
+          const float g = std::max(1e-20f,exponents[i]);
+          m_generatedCutoffs[i] = std::sqrt(lnInvEps/g);
+        }
+        cutoffs = m_generatedCutoffs.data();
+      }
+
+      //=======================================================
+      // bounds
+      //=======================================================
+      if (m_haveExplicitBounds) {
+        m_bounds = m_explicitBounds;
+      } else if (!primitivesChanged) {
+        /* keep the bounds computed on the first pass */
+      } else {
+        m_bounds.invalidate();
+        for (size_t i=0;i<numParticles;i++) {
+          const math::float3 c = positions[i];
+          const float r = cutoffs[i];
+          m_bounds.insert(math::float3(c.x-r,c.y-r,c.z-r));
+          m_bounds.insert(math::float3(c.x+r,c.y+r,c.z+r));
+        }
+      }
+
+      //=======================================================
+      // get (or create) and populate bn field
+      //=======================================================
+      int slot = deviceState()->slot;
+      auto context = deviceState()->tether->context;
+
+      BNScalarField sf = getBarneyScalarField();
+      if (!sf)
+        return;
+
+      auto upload = [&](BNData &slotData, BNDataType type,
+                        size_t count, const void *ptr) {
+        if (!slotData) slotData = bnDataCreate(context,slot,type,count,ptr);
+        else           bnDataSet(slotData,count,ptr);
+      };
+
+      if (primitivesChanged) {
+        upload(m_bnData.position,BN_FLOAT32_VEC3,numParticles,positions);
+        upload(m_bnData.coefficient,BN_FLOAT32,numParticles,
+               m_params.coefficient->beginAs<float>());
+        upload(m_bnData.exponent,BN_FLOAT32,numParticles,exponents);
+        upload(m_bnData.cutoff,BN_FLOAT32,numParticles,cutoffs);
+
+        bnSetData(sf,"particle.center",m_bnData.position);
+        bnSetData(sf,"particle.coeff",m_bnData.coefficient);
+        bnSetData(sf,"particle.gamma",m_bnData.exponent);
+        bnSetData(sf,"particle.cutoff",m_bnData.cutoff);
+
+        if (m_params.monomial && m_params.monomial->totalSize() == numParticles) {
+          upload(m_bnData.monomial,BN_UINT32,numParticles,
+                 m_params.monomial->beginAs<uint32_t>());
+          bnSetData(sf,"particle.monomial",m_bnData.monomial);
+        }
+        if (m_params.polyOffset && m_params.polyCoeff && m_params.polyMonomial) {
+          const size_t nOfs = m_params.polyOffset->totalSize();
+          const size_t nTerm = m_params.polyCoeff->totalSize();
+          if (nOfs != numParticles*(size_t)m_numChannels + 1) {
+            reportMessage(ANARI_SEVERITY_WARNING,
+                          "'particle.polyOffset' must hold "
+                          "numParticles*numChannels+1 entries; ignoring the "
+                          "polynomial arrays");
+          } else if (m_params.polyMonomial->totalSize() != nTerm) {
+            reportMessage(ANARI_SEVERITY_WARNING,
+                          "'particle.polyCoeff' and 'particle.polyMonomial' "
+                          "must be the same length; ignoring them");
+          } else {
+            upload(m_bnData.polyOffset,BN_UINT32,nOfs,
+                   m_params.polyOffset->beginAs<uint32_t>());
+            upload(m_bnData.polyCoeff,BN_FLOAT32,nTerm,
+                   m_params.polyCoeff->beginAs<float>());
+            upload(m_bnData.polyMonomial,BN_UINT32,nTerm,
+                   m_params.polyMonomial->beginAs<uint32_t>());
+            bnSetData(sf,"particle.polyOffset",m_bnData.polyOffset);
+            bnSetData(sf,"particle.polyCoeff",m_bnData.polyCoeff);
+            bnSetData(sf,"particle.polyMonomial",m_bnData.polyMonomial);
+          }
+        }
+        m_uploaded.position = (const void *)positions;
+        m_uploaded.count    = numParticles;
+        m_uploaded.done     = true;
+      }
+
+      int numGroups = 0;
+      if (m_params.group && m_params.group->totalSize() == numParticles) {
+        if (primitivesChanged) {
+          upload(m_bnData.group,BN_UINT32,numParticles,
+                 m_params.group->beginAs<uint32_t>());
+          bnSetData(sf,"particle.group",m_bnData.group);
+        }
+
+        if (m_params.groupValue) {
+          const size_t n = m_params.groupValue->totalSize();
+          upload(m_bnData.groupValue,BN_FLOAT32,n,
+                 m_params.groupValue->beginAs<float>());
+          bnSetData(sf,"group.value",m_bnData.groupValue);
+          numGroups = (int)std::max((size_t)numGroups,n);
+        }
+        if (m_params.groupEnabled) {
+          const size_t n = m_params.groupEnabled->totalSize();
+          upload(m_bnData.groupEnabled,BN_UINT8,n,
+                 m_params.groupEnabled->beginAs<uint8_t>());
+          bnSetData(sf,"group.enabled",m_bnData.groupEnabled);
+          numGroups = (int)std::max((size_t)numGroups,n);
+        }
+        if (m_params.groupDirection && primitivesChanged) {
+          const size_t n = m_params.groupDirection->totalSize();
+          upload(m_bnData.groupDirection,BN_FLOAT32_VEC3,n,
+                 m_params.groupDirection->beginAs<math::float3>());
+          bnSetData(sf,"group.direction",m_bnData.groupDirection);
+          numGroups = (int)std::max((size_t)numGroups,n);
+        }
+      }
+      if (numGroups)
+        bnSet1i(sf,"numGroups",numGroups);
+
+      bnSet1i(sf,"numChannels",m_numChannels);
+      bnSet1i(sf,"channelMask",(int)m_channelMask);
+      bnSet1i(sf,"vecMode",m_vecMode);
+      bnSet1i(sf,"polyMaxDegree",m_polyMaxDegree);
+      if (m_mcSamplesPerAxis != -1000)
+        bnSet1i(sf,"mcSamplesPerAxis",m_mcSamplesPerAxis);
+      if (m_mcRangePad >= 0.f)
+        bnSet1f(sf,"mcRangePad",m_mcRangePad);
+      bnSet2f(sf,"filter.valueRange",m_valueRange.x,m_valueRange.y);
+      if (m_mcGridSize > 0)
+        bnSet1i(sf,"mcGridSize",m_mcGridSize);
+      if (m_haveExplicitBounds) {
+        bnSet3f(sf,"bounds.lower",
+                m_bounds.lower.x,m_bounds.lower.y,m_bounds.lower.z);
+        bnSet3f(sf,"bounds.upper",
+                m_bounds.upper.x,m_bounds.upper.y,m_bounds.upper.z);
+      }
+
+      bnCommit(sf);
+    }
+
+    BNScalarField ParticleRBFField::createBarneyScalarField() const
+    {
+      int slot = deviceState()->slot;
+      auto context = deviceState()->tether->context;
+      return bnScalarFieldCreate(context, slot, "particleRBF");
+    }
+
+    box3 ParticleRBFField::bounds() const
     {
       return m_bounds;
     }
