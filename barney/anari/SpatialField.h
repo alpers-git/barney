@@ -75,7 +75,8 @@ namespace BARNEY_NS {
             cellData(observer),
             index(observer),
             cellType(observer),
-            cellBegin(observer)
+            cellBegin(observer),
+            channelVector(observer)
         {}
         helium::ChangeObserverPtr<helium::Array1D> vertexPosition;
         helium::ChangeObserverPtr<helium::Array1D> vertexData;
@@ -83,6 +84,12 @@ namespace BARNEY_NS {
         helium::ChangeObserverPtr<helium::Array1D> index;
         helium::ChangeObserverPtr<helium::Array1D> cellType;
         helium::ChangeObserverPtr<helium::Array1D> cellBegin;
+        /*! numChannels*numVertices FLOAT32_VEC3, channel-major: the
+          per-channel current vector at each vertex, for the orbital-current
+          field. Absent on an ordinary unstructured mesh. */
+        helium::ChangeObserverPtr<helium::Array1D> channelVector;
+        int numChannels{0};
+        int channelMask{-1};
       } m_params;
 
       struct BarneyData
@@ -92,6 +99,7 @@ namespace BARNEY_NS {
         BNData indices{nullptr};
         BNData cellType{nullptr};
         BNData elementOffsets{nullptr};
+        BNData channelVector{nullptr};
       } m_bnData;
 
       box3 m_bounds;

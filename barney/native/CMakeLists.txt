@@ -70,6 +70,8 @@ set(HOST_SOURCES
 
   # *particle RBF* volumes (signed radial basis function fields)
   volume/ParticleRBFField.h
+  volume/OrbGridField.h
+  volume/OrbGridField.cu
   volume/ParticleRBFField.cu
   volume/ParticleRBFSampler.h
   volume/ParticleRBFSampler.cu
@@ -188,6 +190,7 @@ set(DEVICE_PROGRAM_SOURCES
   geometry/Capsules.dev.cu
   geometry/Cones.dev.cu
   volume/StructuredData.dev.cu
+  volume/OrbGridMC.dev.cu
   volume/NanoVDB.dev.cu
   umesh/mc/UMeshMC.dev.cu
   amr/BlockStructuredMC.dev.cu

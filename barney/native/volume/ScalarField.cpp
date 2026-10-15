@@ -12,6 +12,7 @@
 #include "native/amr/BlockStructuredField.h"
 #include "native/volume/NanoVDB.h"
 #include "native/volume/ParticleRBFField.h"
+#include "native/volume/OrbGridField.h"
 
 namespace BARNEY_NS {
   namespace native {
@@ -58,6 +59,12 @@ namespace BARNEY_NS {
              return std::make_shared<BlockStructuredField>(ctx, devs); 
            });
       
+        registry.registerType
+          ("orbGrid",
+           [](Context* ctx, const DevGroup::SP& devs) {
+             return std::make_shared<OrbGridField>(ctx, devs);
+           });
+
         registry.registerType
           ("particleRBF", 
            [](Context* ctx, const DevGroup::SP& devs) { 

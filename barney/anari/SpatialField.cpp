@@ -280,6 +280,9 @@ namespace BARNEY_NS {
       m_params.cellBegin = getParamObject<helium::Array1D>("cell.begin");
       if (!m_params.cellBegin) // some older apps use "cell.index"
         m_params.cellBegin = getParamObject<helium::Array1D>("cell.index");
+      m_params.channelVector = getParamObject<helium::Array1D>("channel.vector");
+      m_params.numChannels = getParam<int>("numChannels",0);
+      m_params.channelMask = getParam<int>("channelMask",-1);
     }
 
     void UnstructuredField::finalize()
@@ -446,7 +449,23 @@ namespace BARNEY_NS {
       bnSetData(sf, "index", m_bnData.indices);
       bnSetData(sf, "cell.index", m_bnData.elementOffsets);
       bnSetData(sf, "cell.type", m_bnData.cellType);
+      if (m_params.channelVector && m_params.numChannels > 0) {
+        size_t n = m_params.channelVector->size();
+        const void *ptr = m_params.channelVector->data();
+        if (!m_bnData.channelVector)
+          m_bnData.channelVector
+            = bnDataCreate(context, slot, BN_FLOAT3, n, ptr);
+        else
+          bnDataSet(m_bnData.channelVector, n, ptr);
+        bnSetData(sf, "channel.vector", m_bnData.channelVector);
+        bnSet1i(sf, "numChannels", m_params.numChannels);
+      }
       bnCommit(sf);
+      /* the mask is applied after commit: it rebuilds the per-vertex active
+         vectors, the macro-cell ranges and the majorants, all of which need
+         the channel data already in place. */
+      if (m_params.channelVector && m_params.numChannels > 0)
+        bnSet1i(sf, "channelMask", m_params.channelMask);
     }
 
     BNScalarField UnstructuredField::createBarneyScalarField() const
@@ -1037,6 +1056,11 @@ namespace BARNEY_NS {
           case ANARI_INT32:
             bnSet1i(m_bnField, paramName.c_str(), getParam<int>(paramName, 0));
             break;
+          case ANARI_INT32_VEC3: {
+            auto val = getParam<math::int3>(paramName, math::int3(0));
+            bnSet3i(m_bnField, paramName.c_str(), val.x, val.y, val.z);
+            break;
+          }
           case ANARI_UINT32:
             bnSet1i(m_bnField, paramName.c_str(), (int)getParam<uint32_t>(paramName, 0));
             break;

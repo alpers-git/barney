@@ -48,6 +48,24 @@ namespace BARNEY_NS {
     {
       typename bvh_t::box_t box; box.lower = box.upper = to_cubql(P);
 
+      /* numChannels>0 is the orbital-current field: the sample is
+         |sum_{c enabled} j_c(P)|, one scalar, which the volume integrator then
+         puts through the transfer function once. The channels are never
+         classified separately and their colours are never blended - that would
+         composite N colours instead of applying the colour map to the one
+         physically meaningful number. */
+      if (numChannels > 0) {
+        float retVal = 0.f;
+        auto lambda = [this,P,&retVal](const uint32_t primID)
+        {
+          if (this->tetVecMag(retVal,primID,P))
+            return CUBQL_TERMINATE_TRAVERSAL;
+          return CUBQL_CONTINUE_TRAVERSAL;
+        };
+        cuBQL::fixedBoxQuery::forEachPrim(lambda,bvh,box);
+        return retVal;
+      }
+
       float retVal = NAN;
       auto lambda = [this,P,&retVal,dbg]
         // __rtc_device
