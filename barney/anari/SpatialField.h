@@ -10,9 +10,6 @@
 #include "helium/array/ObjectArray.h"
 // ours
 #include "Object.h"
-// std
-#include <limits>
-#include <vector>
 
 namespace BARNEY_NS {
   namespace anari {
@@ -75,8 +72,7 @@ namespace BARNEY_NS {
             cellData(observer),
             index(observer),
             cellType(observer),
-            cellBegin(observer),
-            channelVector(observer)
+            cellBegin(observer)
         {}
         helium::ChangeObserverPtr<helium::Array1D> vertexPosition;
         helium::ChangeObserverPtr<helium::Array1D> vertexData;
@@ -84,12 +80,6 @@ namespace BARNEY_NS {
         helium::ChangeObserverPtr<helium::Array1D> index;
         helium::ChangeObserverPtr<helium::Array1D> cellType;
         helium::ChangeObserverPtr<helium::Array1D> cellBegin;
-        /*! numChannels*numVertices FLOAT32_VEC3, channel-major: the
-          per-channel current vector at each vertex, for the orbital-current
-          field. Absent on an ordinary unstructured mesh. */
-        helium::ChangeObserverPtr<helium::Array1D> channelVector;
-        int numChannels{0};
-        int channelMask{-1};
       } m_params;
 
       struct BarneyData
@@ -99,7 +89,6 @@ namespace BARNEY_NS {
         BNData indices{nullptr};
         BNData cellType{nullptr};
         BNData elementOffsets{nullptr};
-        BNData channelVector{nullptr};
       } m_bnData;
 
       box3 m_bounds;
@@ -179,107 +168,6 @@ namespace BARNEY_NS {
 
       box3 m_bounds;
       math::float3 m_voxelSize;
-    };
-
-    /*! a field of signed, polynomial-modulated radial basis functions -
-        each primitive is coeff * x^px y^py z^pz * exp(-exponent*r^2), and the
-        field is the signed sum over all primitives covering a point. this is
-        the natural representation for gaussian-type atomic orbitals and,
-        through the gaussian product theorem, for orbital *pair* products too.
-
-        'groups' are the units a user selects: a group is one orbital, or one
-        orbital-pair interaction, and many primitives share one. selection is
-        therefore a per-group mask rather than anything per-primitive. */
-    struct ParticleRBFField : public SpatialField
-    {
-      ParticleRBFField(BarneyGlobalState *s);
-      ~ParticleRBFField() override;
-
-      void commitParameters() override;
-      void finalize() override;
-
-      BNScalarField createBarneyScalarField() const override;
-
-      box3 bounds() const override;
-      bool isValid() const override;
-
-      struct Parameters
-      {
-        Parameters(helium::BaseObject *observer)
-          : position(observer),
-            coefficient(observer),
-            exponent(observer),
-            cutoff(observer),
-            monomial(observer),
-            group(observer),
-            groupValue(observer),
-            groupEnabled(observer),
-            polyOffset(observer),
-            polyCoeff(observer),
-            polyMonomial(observer),
-            groupDirection(observer)
-        {}
-        helium::ChangeObserverPtr<helium::Array1D> position;
-        helium::ChangeObserverPtr<helium::Array1D> coefficient;
-        helium::ChangeObserverPtr<helium::Array1D> exponent;
-        helium::ChangeObserverPtr<helium::Array1D> cutoff;
-        helium::ChangeObserverPtr<helium::Array1D> monomial;
-        helium::ChangeObserverPtr<helium::Array1D> group;
-        helium::ChangeObserverPtr<helium::Array1D> groupValue;
-        helium::ChangeObserverPtr<helium::Array1D> groupEnabled;
-        /*! polynomial-blob mode: one gaussian per primitive carrying a whole
-            polynomial per orbital channel, plus the per-group bond direction
-            that makes the field a vector field */
-        helium::ChangeObserverPtr<helium::Array1D> polyOffset;
-        helium::ChangeObserverPtr<helium::Array1D> polyCoeff;
-        helium::ChangeObserverPtr<helium::Array1D> polyMonomial;
-        helium::ChangeObserverPtr<helium::Array1D> groupDirection;
-      } m_params;
-
-      struct BarneyData
-      {
-        BNData position{nullptr};
-        BNData coefficient{nullptr};
-        BNData exponent{nullptr};
-        BNData cutoff{nullptr};
-        BNData monomial{nullptr};
-        BNData group{nullptr};
-        BNData groupValue{nullptr};
-        BNData groupEnabled{nullptr};
-        BNData polyOffset{nullptr};
-        BNData polyCoeff{nullptr};
-        BNData polyMonomial{nullptr};
-        BNData groupDirection{nullptr};
-      } m_bnData;
-
-      /*! only used when the app does not supply 'particle.cutoff' - derived
-          from the exponents and the relative cutoff threshold */
-      std::vector<float> m_generatedCutoffs;
-
-      /*! the primitive arrays never change after the first upload in practice,
-          but the filter parameters change on every ui interaction; re-uploading
-          a million primitives for a slider drag is what this guards against */
-      struct UploadState {
-        const void *position{nullptr};
-        size_t      count{0};
-        bool        done{false};
-      } m_uploaded;
-
-      int          m_numChannels{1};
-      /*! bit c enables orbital channel c; a uniform, because every channel
-          shares one blob's geometry and switching must not rebuild the bvh */
-      unsigned     m_channelMask{0xffffffffu};
-      int          m_vecMode{0};
-      int          m_polyMaxDegree{6};
-      /*! -1 leaves barney's own default in place */
-      int          m_mcSamplesPerAxis{-1};
-      float        m_mcRangePad{-1.f};
-      float        m_cutoffThreshold{1e-4f};
-      int          m_mcGridSize{0};
-      math::float2 m_valueRange{0.f,std::numeric_limits<float>::infinity()};
-      bool         m_haveExplicitBounds{false};
-      box3         m_explicitBounds;
-      box3         m_bounds;
     };
 
     // Generic wrapper for custom Barney scalar field types

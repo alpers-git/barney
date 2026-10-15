@@ -103,17 +103,6 @@ namespace BARNEY_NS {
                                             uint32_t cellIdx,
                                             vec3f P) const;
 
-        /* compute |sum_c j_c| of the given tet at P, where the sum runs over
-           the *enabled* channels. The channels were already summed per vertex
-           into 'activeVec' (see recombineChannels): interpolation is linear,
-           so summing at the vertices and interpolating is identical to
-           interpolating each channel and summing at P, and the per-sample cost
-           does not grow with the channel count. The magnitude is taken once,
-           here, at P - never per channel, and never after classification. */
-        inline __rtc_device bool tetVecMag(float &retVal,
-                                           uint32_t cellIdx,
-                                           vec3f P) const;
-
         const vec3f       *vertices;
         const float       *scalars;
         const int         *indices;
@@ -124,24 +113,6 @@ namespace BARNEY_NS {
         int                numScalars;
         int                numIndices;
         bool               scalarsArePerVertex;
-
-        /*! @{ orbital-channel vector field. numChannels==0 means this is a
-          plain scalar umesh and none of this is touched - every stock umesh
-          path behaves exactly as before.
-
-          channelVec is channel-major, numChannels*numVertices vec3f: the
-          per-channel current *vector* at each vertex. It has to be vectors,
-          not magnitudes, because |sum_c j_c| != sum_c |j_c| wherever channels
-          oppose, and that cancellation is the interference the orbital filter
-          exists to show.
-
-          activeVec is the per-vertex sum over the currently enabled channels,
-          recomputed whenever channelMask changes. */
-        const vec3f       *channelVec;
-        const vec3f       *activeVec;
-        int                numChannels;
-        uint32_t           channelMask;
-        /*! @} */
       };
 
       /*! build *initial* macro-cell grid (ie, the scalar field min/max
@@ -161,7 +132,6 @@ namespace BARNEY_NS {
       void commit() override;
       bool setData(const std::string &member,
                    const std::shared_ptr<Data> &value) override;
-      bool set1i(const std::string &member, const int &value) override;
       /*! @} */
       // ------------------------------------------------------------------
 
@@ -190,36 +160,8 @@ namespace BARNEY_NS {
       int numCells;
       bool scalarsArePerVertex = false;
       /*! @} */
-
-      /*! @{ orbital-channel vector field. numChannels==0 means a plain scalar
-        umesh and nothing here is used.
-
-        channelVecData is channel-major, numChannels*numVertices vec3f. The
-        enabled channels are summed per vertex into PLD::activeVec, and the
-        macro-cell ranges are rebuilt from |activeVec|; both depend on
-        channelMask, so both are recomputed whenever it changes. */
-      PODData::SP channelVecData;
-      int         numChannels = 0;
-      uint32_t    channelMask = ~0u;
-
-      /*! set the enabled-channel mask and rebuild everything downstream of it:
-        the per-vertex active vectors, the macro-cell scalar ranges, and the
-        majorants derived from those ranges. */
-      void setChannelMask(uint32_t mask);
-
-      /*! recompute activeVec and the macro-cell ranges for the current mask */
-      void refreshVecMCs();
-
-      /*! the accels built on this field. A mask change commits the *field*,
-        not the volume, so Volume::commit() never runs and nothing else would
-        refresh the majorants; the field has to push to them itself. */
-      std::vector<std::weak_ptr<VolumeAccel>> accels;
-      /*! @} */
-
       struct PLD {
         box3f   *pWorldBounds = 0;
-        /*! per-vertex sum of the enabled channels' vectors */
-        vec3f   *activeVec = 0;
       };
       PLD *getPLD(Device *device);
       std::vector<PLD> perLogical;
@@ -446,61 +388,6 @@ namespace BARNEY_NS {
       return false;
     }
   
-    /*! |sum_{c enabled} j_c| of a tet at P.
-
-      Inside a tet every channel's vector is affine, so their sum is affine and
-      the magnitude of an affine vector field is *convex*. Two things follow,
-      and the majorant math depends on both:
-
-        - the value at P is |sum_k w_k a_k| over the barycentric weights w_k,
-          i.e. the magnitude is taken once, at P, after the vectors are summed;
-
-        - the maximum over the tet is attained at one of its four vertices, so
-          max_cell |j| = max over the influencing vertices of |activeVec|, and
-          that bound is exact rather than conservative.
-
-      A miss returns 0 rather than NAN: a macro cell can carry a nonzero
-      majorant while a particular sample lands in a gap between elements, and
-      NAN would poison the classification. */
-    inline __rtc_device
-    bool UMeshField::DD::tetVecMag(float &retVal,
-                                   uint32_t cellIdx,
-                                   vec3f P) const
-    {
-      int ofs0 = cellOffsets[cellIdx];
-      if (ofs0 < 0 || (long long)ofs0 + 4 > (long long)numIndices)
-        return false;
-      const int *ix = this->indices + ofs0;
-      vec4i indices(ix[0], ix[1], ix[2], ix[3]);
-      auto badVtx = [&](int v) { return v < 0 || v >= numVertices; };
-      if (badVtx(indices.x) || badVtx(indices.y) || badVtx(indices.z)
-          || badVtx(indices.w))
-        return false;
-
-      vec4f v0(vertices[indices.x],0.f);
-      vec4f v1(vertices[indices.y],0.f);
-      vec4f v2(vertices[indices.z],0.f);
-      vec4f v3(vertices[indices.w],0.f);
-
-      float t3 = evalToImplicitPlane(P,v0,v1,v2);
-      if (t3 < 0.f) return false;
-      float t2 = evalToImplicitPlane(P,v0,v3,v1);
-      if (t2 < 0.f) return false;
-      float t1 = evalToImplicitPlane(P,v0,v2,v3);
-      if (t1 < 0.f) return false;
-      float t0 = evalToImplicitPlane(P,v1,v3,v2);
-      if (t0 < 0.f) return false;
-
-      float sum = t0+t1+t2+t3;
-      if (sum <= 0.f) { retVal = 0.f; return true; }
-      float scale = 1.f/sum;
-      vec3f j
-        = scale * (t0*activeVec[indices.x] + t1*activeVec[indices.y]
-                 + t2*activeVec[indices.z] + t3*activeVec[indices.w]);
-      retVal = sqrtf(j.x*j.x + j.y*j.y + j.z*j.z);
-      return true;
-    }
-
     inline __rtc_device
     bool UMeshField::DD::tetScalar(float &retVal,
                                    uint32_t cellIdx,

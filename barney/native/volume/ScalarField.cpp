@@ -11,7 +11,6 @@
 #include "native/umesh/common/UMeshField.h"
 #include "native/amr/BlockStructuredField.h"
 #include "native/volume/NanoVDB.h"
-#include "native/volume/ParticleRBFField.h"
 #include "native/volume/OrbGridField.h"
 
 namespace BARNEY_NS {
@@ -65,12 +64,6 @@ namespace BARNEY_NS {
              return std::make_shared<OrbGridField>(ctx, devs);
            });
 
-        registry.registerType
-          ("particleRBF", 
-           [](Context* ctx, const DevGroup::SP& devs) { 
-             return std::make_shared<ParticleRBFField>(ctx, devs); 
-           });
-      
         registry.registerType
           ("NanoVDB", 
            [](Context* ctx, const DevGroup::SP& devs) -> ScalarField::SP {

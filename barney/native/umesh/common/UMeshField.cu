@@ -7,7 +7,6 @@
 #include "native/Context.h"
 #include "native/umesh/mc/UMeshCuBQLSampler.h"
 #include "native/volume/MCGrid.cuh"
-#include <chrono>
 
 namespace BARNEY_NS {
   namespace native {
@@ -157,154 +156,6 @@ namespace BARNEY_NS {
 #endif
     }
   
-    // ==================================================================
-    // orbital-channel vector field
-    // ==================================================================
-
-    /*! activeVec[v] = sum over the ENABLED channels of that channel's current
-      vector at v.
-
-      Summing here rather than at each sample is not an approximation:
-      interpolation is linear, so sum_c interp(j_c)(P) == interp(sum_c j_c)(P)
-      exactly. It makes the per-sample cost independent of the channel count,
-      and it is what lets the macro-cell bound be computed from |activeVec|. */
-    __rtc_global void umeshRecombineChannels(rtc::ComputeInterface ci,
-                                             UMeshField::DD mesh,
-                                             vec3f *activeVec)
-    {
-#if RTC_DEVICE_CODE
-      const int v = ci.launchIndex().x;
-      if (v >= mesh.numVertices) return;
-      vec3f sum(0.f,0.f,0.f);
-      for (int c=0;c<mesh.numChannels;c++)
-        if (mesh.channelMask & (1u<<c))
-          sum = sum + mesh.channelVec[(size_t)c*mesh.numVertices + v];
-      activeVec[v] = sum;
-#endif
-    }
-
-    /*! rasterize each tet's |j| range into the macro cells it overlaps.
-
-      rasterTet subdivides and linearly interpolates the w component, so
-      feeding it |activeVec| at the four vertices yields, at every subdivision
-      point, the interpolated *magnitude* - which by the triangle inequality is
-      >= the magnitude of the interpolated vector, the quantity actually
-      sampled. The resulting upper bound is therefore conservative, never too
-      small, which is what a majorant has to be.
-
-      The low end is fixed up afterwards by umeshClampRangeLow: |j| is convex
-      inside a tet, so its minimum can dip below the value at every vertex, and
-      a range that starts at the vertex minimum would be too narrow for a
-      transfer function whose opacity is not monotonic. */
-    __rtc_global void umeshRasterVecCells(rtc::ComputeInterface ci,
-                                          UMeshField::DD mesh,
-                                          MCGrid::DD grid)
-    {
-#if RTC_DEVICE_CODE
-      const int cellIdx = ci.launchIndex().x;
-      if (cellIdx >= mesh.numCells) return;
-      auto cellType = mesh.cellTypes[cellIdx];
-      if (!(cellType == _VTK_TET || cellType == _ANARI_TET)) {
-        const box4f eltBounds = mesh.cellBounds(cellIdx);
-        rasterBox(grid,getBox(mesh.worldBounds),eltBounds);
-        return;
-      }
-      const int ofs0 = mesh.cellOffsets[cellIdx];
-      if (ofs0 < 0 || (long long)ofs0 + 4 > (long long)mesh.numIndices)
-        return;
-      const int *ix = mesh.indices + ofs0;
-      const vec4i id(ix[0], ix[1], ix[2], ix[3]);
-      auto vtxOk = [&](int vi) { return vi >= 0 && vi < mesh.numVertices; };
-      if (!vtxOk(id.x) || !vtxOk(id.y) || !vtxOk(id.z) || !vtxOk(id.w))
-        return;
-      auto mag = [&](int vi) {
-        vec3f j = mesh.activeVec[vi];
-        return sqrtf(j.x*j.x + j.y*j.y + j.z*j.z);
-      };
-      vec4f a(mesh.vertices[id.x], mag(id.x));
-      vec4f b(mesh.vertices[id.y], mag(id.y));
-      vec4f c(mesh.vertices[id.z], mag(id.z));
-      vec4f d(mesh.vertices[id.w], mag(id.w));
-      /* depth 0, i.e. just this tet's bounding box.
-
-         The scalar path uses depth 5 so that a tet spanning many macro cells
-         gets a localised range in each of them. That does not apply here: this
-         field's elements are finer than the macro cells, so a tet touches only
-         one or two of them and subdividing gains essentially nothing - while
-         costing 32 box rasterisations per tet, which over 37M tets is 1.2e9 of
-         them on *every channel toggle*. Depth 0 is what makes a toggle
-         interactive.
-
-         It stays a valid majorant: |j| is convex inside a tet, so its maximum
-         over the tet is attained at a vertex, and the box covers the tet. */
-      rasterTet<0>(grid, a, b, c, d);
-#endif
-    }
-
-    /*! pull every non-empty cell's range down to 0; see umeshRasterVecCells */
-    __rtc_global void umeshClampRangeLow(rtc::ComputeInterface ci,
-                                         MCGrid::DD grid,
-                                         int numCells)
-    {
-#if RTC_DEVICE_CODE
-      const int i = ci.launchIndex().x;
-      if (i >= numCells) return;
-      range1f r = grid.scalarRanges[i];
-      if (r.lower > r.upper) return;           // still empty, leave it
-      if (r.lower > 0.f) grid.scalarRanges[i].lower = 0.f;
-#endif
-    }
-
-    void UMeshField::refreshVecMCs()
-    {
-      if (numChannels <= 0) return;
-      const auto t0 = std::chrono::steady_clock::now();
-      for (auto device : *devices) {
-        SetActiveGPU forDuration(device);
-        auto rtc = device->rtc;
-        PLD *pld = getPLD(device);
-        if (!pld->activeVec)
-          pld->activeVec
-            = (vec3f *)rtc->allocMem((size_t)vertices->count*sizeof(vec3f));
-        __rtc_launch(rtc,umeshRecombineChannels,
-                     divRoundUp((int)vertices->count,256),256,
-                     getDD(device),pld->activeVec);
-        rtc->sync();
-      }
-      if (!mcGrid || !mcGrid->built()) return;
-      const int numCells = mcGrid->dims.x*mcGrid->dims.y*mcGrid->dims.z;
-      mcGrid->clearCells();
-      for (auto device : *devices) {
-        SetActiveGPU forDuration(device);
-        auto rtc = device->rtc;
-        __rtc_launch(rtc,umeshRasterVecCells,
-                     divRoundUp((int)cellOffsets->count,128),128,
-                     getDD(device),mcGrid->getDD(device));
-        __rtc_launch(rtc,umeshClampRangeLow,
-                     divRoundUp(numCells,1024),1024,
-                     mcGrid->getDD(device),numCells);
-        rtc->sync();
-      }
-      /* the ranges just changed without the transfer function changing, so
-         nothing downstream would know to recompute the majorants; a stale
-         majorant is too small wherever the new range is larger, and woodcock
-         tracking then misses extinction. */
-      ++mcGrid->contentEpoch;
-      for (auto &weak : accels)
-        if (auto accel = weak.lock())
-          accel->rebuildMajorantsOnly();
-      const double ms = std::chrono::duration<double,std::milli>
-        (std::chrono::steady_clock::now()-t0).count();
-      std::cout << "#bn.um: channel refresh " << ms << " ms" << std::endl;
-    }
-
-    void UMeshField::setChannelMask(uint32_t mask)
-    {
-      if (numChannels <= 0 || mask == channelMask) return;
-      channelMask = mask;
-      refreshVecMCs();
-    }
-
     MCGrid::SP UMeshField::buildMCs()
     {
       MCGrid::SP mcGrid = std::make_shared<MCGrid>(devices);
@@ -336,33 +187,6 @@ namespace BARNEY_NS {
     
       grid.clearCells();
     
-      if (numChannels > 0) {
-        /* the ranges depend on which channels are enabled, so they are built
-           by the same path that a mask change uses - activeVec first, then
-           |activeVec| rasterised into the cells. */
-        for (auto device : *devices) {
-          SetActiveGPU forDuration(device);
-          auto rtc = device->rtc;
-          PLD *pld = getPLD(device);
-          if (!pld->activeVec)
-            pld->activeVec
-              = (vec3f *)rtc->allocMem((size_t)vertices->count*sizeof(vec3f));
-          __rtc_launch(rtc,umeshRecombineChannels,
-                       divRoundUp((int)vertices->count,256),256,
-                       getDD(device),pld->activeVec);
-          rtc->sync();
-          __rtc_launch(rtc,umeshRasterVecCells,
-                       divRoundUp(numCells,128),128,
-                       getDD(device),grid.getDD(device));
-          __rtc_launch(rtc,umeshClampRangeLow,
-                       divRoundUp(dims.x*dims.y*dims.z,1024),1024,
-                       grid.getDD(device),dims.x*dims.y*dims.z);
-        }
-        for (auto device : *devices)
-          device->sync();
-        return;
-      }
-
       for (auto device : *devices) 
         __rtc_launch(device->rtc,
                      umeshRasterCells,
@@ -372,30 +196,11 @@ namespace BARNEY_NS {
         device->sync();
     }
     
-    bool UMeshField::set1i(const std::string &member, const int &value)
-    {
-      if (member == "numChannels") { numChannels = value; return true; }
-      if (member == "channelMask") {
-        /* a mask change rewrites the per-vertex active vectors, the macro-cell
-           ranges and the majorants; see setChannelMask */
-        setChannelMask((uint32_t)value);
-        return true;
-      }
-      return ScalarField::set1i(member,value);
-    }
-
     bool UMeshField::setData(const std::string &member,
                              const std::shared_ptr<Data> &value)
     {
       if (ScalarField::setData(member,value))
         return true;
-
-      if (member == "channel.vector") {
-        /* numChannels*numVertices vec3f, channel-major: the per-channel
-           current vector at each vertex */
-        channelVecData = value->as<PODData>();
-        return true;
-      }
 
       if (member == "cell.index") {
         cellOffsets = value->as<PODData>();
@@ -591,11 +396,6 @@ namespace BARNEY_NS {
       dd.numVertices = (int)vertices->count;
       dd.numScalars  = (int)scalars->count;
       dd.numIndices  = (int)indices->count;
-      dd.numChannels = numChannels;
-      dd.channelMask = channelMask;
-      dd.channelVec  = channelVecData
-        ? (const vec3f *)channelVecData->getDD(device) : nullptr;
-      dd.activeVec   = (const vec3f *)getPLD(device)->activeVec;
       assert(dd.numCells > 0);
       assert(dd.vertices);
       assert(dd.indices);
@@ -618,14 +418,10 @@ namespace BARNEY_NS {
 #else
       auto sampler
         = std::make_shared<UMeshCuBQLSampler>(this);
-      auto accel = std::make_shared<MCVolumeAccel<UMeshCuBQLSampler>>
+      return std::make_shared<MCVolumeAccel<UMeshCuBQLSampler>>
         (volume,
          createGeomType_UMeshMC,
          sampler);
-      /* a channel-mask change commits the field, not the volume, so the field
-         has to be able to refresh this accel's majorants itself */
-      accels.push_back(accel);
-      return accel;
 #endif
     }
   }
