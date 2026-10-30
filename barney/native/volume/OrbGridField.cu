@@ -18,6 +18,21 @@ namespace BARNEY_NS {
       : ScalarField(context,devices)
     { perLogical.resize(devices->numLogical); }
 
+    OrbGridField::~OrbGridField()
+    { freeActiveVec(); }
+
+    void OrbGridField::freeActiveVec()
+    {
+      for (auto device : *devices) {
+        SetActiveGPU forDuration(device);
+        PLD *pld = getPLD(device);
+        if (pld->activeVec)
+          device->rtc->freeMem(pld->activeVec);
+        pld->activeVec = 0;
+        pld->numActive = 0;
+      }
+    }
+
     OrbGridField::PLD *OrbGridField::getPLD(Device *device)
     {
       assert(device && device->contextRank() >= 0);
@@ -37,7 +52,7 @@ namespace BARNEY_NS {
       vec3f sum(0.f,0.f,0.f);
       for (int c=0;c<field.numChannels;c++)
         if (field.channelMask & (1u<<c))
-          sum = sum + field.channelVec[(size_t)c*numVoxels + v];
+          sum += field.channelVec[(size_t)c*numVoxels + v];
       activeVec[v] = sum;
 #endif
     }
@@ -100,8 +115,14 @@ namespace BARNEY_NS {
         SetActiveGPU forDuration(device);
         auto rtc = device->rtc;
         PLD *pld = getPLD(device);
-        if (!pld->activeVec)
+        if (pld->activeVec && pld->numActive != (size_t)numVoxels) {
+          rtc->freeMem(pld->activeVec);
+          pld->activeVec = 0;
+        }
+        if (!pld->activeVec) {
           pld->activeVec = (vec3f*)rtc->allocMem((size_t)numVoxels*sizeof(vec3f));
+          pld->numActive = numVoxels;
+        }
         __rtc_launch(rtc,orbGridRecombine,
                      divRoundUp(numVoxels,256),256,
                      getDD(device),pld->activeVec,numVoxels);
@@ -185,7 +206,7 @@ namespace BARNEY_NS {
     }
 
     IsoSurfaceAccel::SP OrbGridField::createIsoAccel(IsoSurface *isoSurface)
-    { return {}; }
+    { return {}; } //Unsupported
 
     bool OrbGridField::set3i(const std::string &member, const vec3i &value)
     {

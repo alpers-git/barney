@@ -8,6 +8,7 @@
 #include "helium/array/Array1D.h"
 #include "helium/array/Array3D.h"
 #include "helium/array/ObjectArray.h"
+#include <map>
 // ours
 #include "Object.h"
 
@@ -188,6 +189,17 @@ namespace BARNEY_NS {
 
       std::string m_fieldType;
       box3 m_bounds;
+
+      /*! the array each array parameter was last uploaded from, and that
+        array's data stamp at the time. Every commit re-applies every
+        parameter, so without this a commit that only changes a scalar
+        re-uploads every array. Holding a reference keeps the address from
+        being reused by a different array. */
+      struct UploadedArray {
+        helium::IntrusivePtr<helium::Array> array;
+        helium::TimeStamp dataStamp = 0;
+      };
+      std::map<std::string, UploadedArray> m_uploaded;
     };
 
   }

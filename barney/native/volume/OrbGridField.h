@@ -12,22 +12,18 @@ namespace BARNEY_NS {
 
     /*! an orbital-current field on a dense regular grid.
 
-      Same physics and the same filtering as the unstructured (.orbm) version:
-      every voxel carries one current *vector* per orbital channel, the enabled
+      Every voxel carries one current *vector* per orbital channel, the enabled
       channels are summed per voxel into 'activeVec', that one vector is
       interpolated at the sample point, and its magnitude is what reaches the
       transfer function. Vectors rather than magnitudes because
       |sum_c j_c| != sum_c |j_c| wherever channels oppose.
 
-      What differs is the container. The tet version stores a uniform lattice
-      cut into 6 tets per cube, which costs 567MB of connectivity and a cuBQL
-      bvh over 37M primitives to answer a question - "which element contains
-      P?" - that on a regular grid is three divisions. Sampling here is a
+      Locating the voxel that contains P is three divisions, so sampling is a
       trilinear fetch with no acceleration structure at all.
 
-      Majorants work out exactly as they do for the tets, and for the same
-      reason: trilinear interpolation is a convex combination of the 8 corner
-      vectors, so |sum_i w_i a_i| <= max_i |a_i|. The maximum of |j| over a
+      Majorants come out exact because trilinear interpolation is a convex
+      combination of the 8 corner vectors, so |sum_i w_i a_i| <= max_i |a_i|.
+      The maximum of |j| over a
       cell is therefore bounded by the corner values, and a macro cell's range
       is [0, max |activeVec| over the voxels it covers]. The low end is 0
       rather than the corner minimum because |j| is convex and can dip below
@@ -37,7 +33,7 @@ namespace BARNEY_NS {
       typedef std::shared_ptr<OrbGridField> SP;
 
       OrbGridField(Context *context, const DevGroup::SP &devices);
-      virtual ~OrbGridField() = default;
+      virtual ~OrbGridField();
 
       struct DD : public ScalarField::DD {
         /*! numChannels * nx*ny*nz vec3f, channel-major */
@@ -88,7 +84,10 @@ namespace BARNEY_NS {
         push the new majorants to its accels itself */
       std::vector<std::weak_ptr<VolumeAccel>> accels;
 
-      struct PLD { vec3f *activeVec = 0; };
+      /*! activeVec is a raw rtc allocation, so it is freed by hand: in the
+        destructor, and whenever the voxel count it was sized for changes */
+      struct PLD { vec3f *activeVec = 0; size_t numActive = 0; };
+      void freeActiveVec();
       PLD *getPLD(Device *device);
       std::vector<PLD> perLogical;
     };

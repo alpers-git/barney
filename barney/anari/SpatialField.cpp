@@ -627,6 +627,17 @@ namespace BARNEY_NS {
 
     // CustomSpatialField //
 
+    namespace {
+      /*! helium bumps an array's m_lastDataModified on every unmap, but has no
+        public getter for it. A pointer-to-member formed through a derived
+        class is the standard-conforming way to read a protected member; the
+        struct is never instantiated. */
+      struct ArrayDataStamp : helium::Array {
+        static helium::TimeStamp of(const helium::Array &a)
+        { return a.*(&ArrayDataStamp::m_lastDataModified); }
+      };
+    }
+
     CustomSpatialField::CustomSpatialField(BarneyGlobalState *s, const std::string &type)
       : SpatialField(s), m_fieldType(type)
     {
@@ -670,7 +681,23 @@ namespace BARNEY_NS {
     
       int slot = deviceState()->slot;
       auto context = deviceState()->tether->context;
-    
+
+      /* skip an array that is the same object with the same data as the one
+         the field already holds - re-sending it would allocate and fill a
+         second device copy before the first one is released */
+      std::map<std::string, UploadedArray> uploaded;
+      auto alreadyUploaded = [&](const std::string &name, helium::Array *array) {
+        auto it = m_uploaded.find(name);
+        if (it == m_uploaded.end() || it->second.array.ptr != array
+            || it->second.dataStamp != ArrayDataStamp::of(*array))
+          return false;
+        uploaded[name] = it->second;
+        return true;
+      };
+      auto markUploaded = [&](const std::string &name, helium::Array *array) {
+        uploaded[name] = { array, ArrayDataStamp::of(*array) };
+      };
+
       // Iterate over all parameters and forward them to Barney
       for (auto it = params_begin(); it != params_end(); ++it) {
         const std::string& paramName = it->first;
@@ -682,6 +709,8 @@ namespace BARNEY_NS {
           if (!array || !array->data()) {
             continue;
           }
+          if (alreadyUploaded(paramName, array))
+            continue;
         
           auto dims = array->size();
           auto elemType = array->elementType();
@@ -701,12 +730,15 @@ namespace BARNEY_NS {
                                                    array->data());
           bnSetObject(m_bnField, paramName.c_str(), td);
           bnRelease(td);
+          markUploaded(paramName, array);
         }
         else if (paramType == ANARI_ARRAY2D) {
           auto array = getParamObject<helium::Array2D>(paramName);
           if (!array || !array->data()) {
             continue;
           }
+          if (alreadyUploaded(paramName, array))
+            continue;
         
           auto dims = array->size();
           auto elemType = array->elementType();
@@ -726,12 +758,15 @@ namespace BARNEY_NS {
                                                    array->data());
           bnSetObject(m_bnField, paramName.c_str(), td);
           bnRelease(td);
+          markUploaded(paramName, array);
         }
         else if (paramType == ANARI_ARRAY1D) {
           auto array = getParamObject<helium::Array1D>(paramName);
           if (!array || !array->data()) {
             continue;
           }
+          if (alreadyUploaded(paramName, array))
+            continue;
         
           auto elemType = array->elementType();
           size_t numElements = array->totalSize();
@@ -749,6 +784,7 @@ namespace BARNEY_NS {
           BNData data = bnDataCreate(context, slot, barneyType, numElements, array->data());
           bnSetObject(m_bnField, paramName.c_str(), data);
           bnRelease(data);
+          markUploaded(paramName, array);
         }
         // Handle scalar parameters
         else {
@@ -786,6 +822,9 @@ namespace BARNEY_NS {
         }
       }
     
+      /* arrays no longer set as parameters are dropped here, releasing them */
+      m_uploaded = std::move(uploaded);
+
       // Commit the field with all parameters
       bnCommit(m_bnField);
     }
