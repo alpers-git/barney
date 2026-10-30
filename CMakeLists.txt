@@ -268,6 +268,8 @@ include(CMakePackageConfigHelpers)
 
 # ==================================================================
 option(BARNEY_DISABLE_DENOISING "DISable denoising" OFF)
+option(BARNEY_MULTIVARIATE_HW_INTERP
+  "multi-variate grids: hardware texture interpolation (CUDA/OptiX backends)" ON)
 #option(BARNEY_HAVE_NANOVDB "Include Support for NanoVDB" ON)
 set(BARNEY_HAVE_NANOVDB ON)
 

@@ -68,9 +68,9 @@ set(HOST_SOURCES
   amr/BlockStructuredCuBQLSampler.cu
   amr/BlockStructuredField.cu
   
-  # *orbital-current grid* volumes (per-channel vector fields on a dense grid)
-  volume/OrbGridField.h
-  volume/OrbGridField.cu
+  # *multi-variate grid* volumes (weighted channel mix on a dense grid)
+  volume/MultiVariateGrid.h
+  volume/MultiVariateGrid.cu
 
   # *structured* volumes
   volume/StructuredData.h
@@ -186,7 +186,7 @@ set(DEVICE_PROGRAM_SOURCES
   geometry/Capsules.dev.cu
   geometry/Cones.dev.cu
   volume/StructuredData.dev.cu
-  volume/OrbGridMC.dev.cu
+  volume/MultiVariateGridMC.dev.cu
   volume/NanoVDB.dev.cu
   umesh/mc/UMeshMC.dev.cu
   amr/BlockStructuredMC.dev.cu

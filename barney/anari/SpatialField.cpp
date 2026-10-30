@@ -816,6 +816,10 @@ namespace BARNEY_NS {
           case ANARI_BOOL:
             bnSet1i(m_bnField, paramName.c_str(), getParam<bool>(paramName, false) ? 1 : 0);
             break;
+          case ANARI_STRING:
+            bnSetString(m_bnField, paramName.c_str(),
+                        getParamString(paramName, "").c_str());
+            break;
           default:
             break;
           }

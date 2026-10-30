@@ -11,7 +11,7 @@
 #include "native/umesh/common/UMeshField.h"
 #include "native/amr/BlockStructuredField.h"
 #include "native/volume/NanoVDB.h"
-#include "native/volume/OrbGridField.h"
+#include "native/volume/MultiVariateGrid.h"
 
 namespace BARNEY_NS {
   namespace native {
@@ -59,9 +59,9 @@ namespace BARNEY_NS {
            });
       
         registry.registerType
-          ("orbGrid",
+          ("multiVariateGrid",
            [](Context* ctx, const DevGroup::SP& devs) {
-             return std::make_shared<OrbGridField>(ctx, devs);
+             return std::make_shared<MultiVariateGridField>(ctx, devs);
            });
 
         registry.registerType
