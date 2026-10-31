@@ -781,6 +781,9 @@ namespace BARNEY_NS {
             continue;
           }
         
+          /* let go of the previous upload first, or old and new must both fit */
+          if (m_uploaded.count(paramName))
+            bnSetData(m_bnField, paramName.c_str(), nullptr);
           BNData data = bnDataCreate(context, slot, barneyType, numElements, array->data());
           bnSetObject(m_bnField, paramName.c_str(), data);
           bnRelease(data);
